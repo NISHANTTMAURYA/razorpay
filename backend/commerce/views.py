@@ -15,28 +15,39 @@ from .serializers import (
 )
 from .services import RazorpayService
 
+from .merchant_clients import merchant_gateway
+
 class ProductListView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        queryset = Product.objects.filter(is_available=True)
         category_slug = request.query_params.get('category')
         brand = request.query_params.get('brand')
-        max_price = request.query_params.get('max_price')
-        min_price = request.query_params.get('min_price')
-        search_query = request.query_params.get('q')
+        max_price_param = request.query_params.get('max_price')
+        min_price_param = request.query_params.get('min_price')
+        search_query = request.query_params.get('q') or ""
 
-        if category_slug:
-            queryset = queryset.filter(category__slug=category_slug)
-        if brand:
-            queryset = queryset.filter(brand__iexact=brand)
-        if max_price:
-            queryset = queryset.filter(price__lte=Decimal(max_price))
-        if min_price:
-            queryset = queryset.filter(price__gte=Decimal(min_price))
+        max_price = float(max_price_param) if max_price_param else None
+        min_price = float(min_price_param) if min_price_param else None
+
+        # Fetch from 10 live Merchant APIs through Gateway
+        merchant_products = merchant_gateway.search_all_merchants(
+            query=search_query,
+            max_price=max_price,
+            min_price=min_price
+        )
+
+        if merchant_products:
+            if category_slug:
+                merchant_products = [p for p in merchant_products if p.get('category', {}).get('slug') == category_slug.lower()]
+            if brand:
+                merchant_products = [p for p in merchant_products if p.get('brand', '').lower() == brand.lower()]
+            return Response(merchant_products)
+
+        # Fallback to local database if needed
+        queryset = Product.objects.filter(is_available=True)
         if search_query:
             queryset = queryset.filter(name__icontains=search_query)
-
         serializer = ProductSerializer(queryset, many=True)
         return Response(serializer.data)
 

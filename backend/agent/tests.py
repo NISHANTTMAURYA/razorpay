@@ -50,7 +50,7 @@ class AgentTracerAndEngineTests(TestCase):
         self.assertTrue(len(result["steps"]) >= 2)
         step_names = [s["step_name"] for s in result["steps"]]
         self.assertIn("Intent Understanding", step_names)
-        self.assertIn("Catalog Search & Extraction", step_names)
+        self.assertIn("Merchant API Gateway Search", step_names)
 
     def test_agent_chat_view_endpoint(self):
         url = reverse('agent_chat')

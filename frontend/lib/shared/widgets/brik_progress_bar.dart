@@ -13,7 +13,7 @@ class BrikProgressBar extends StatelessWidget {
     required this.percentage,
     this.totalSegments = 24,
     this.height = 28,
-    this.activeColor = BrikTheme.accentLavender,
+    this.activeColor = BrikTheme.brandNavy,
     this.inactiveColor = BrikTheme.cardSurfaceSecondary,
   });
 

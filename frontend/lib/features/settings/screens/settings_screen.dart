@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/theme/brik_theme.dart';
 import '../../../core/services/supabase_auth_service.dart';
+import '../../../core/providers/watcher_provider.dart';
 import '../../../shared/widgets/brik_header_card.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
@@ -19,6 +21,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _priceAlerts = true;
   bool _voiceShopping = true;
   bool _fastCheckout = true;
+
+  void _cancelWatcher(BuildContext context, String id) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final provider = context.read<WatcherProvider>();
+    final success = await provider.removeWatcher(id);
+    messenger.showSnackBar(
+      SnackBar(
+        backgroundColor: BrikTheme.cardSurface,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        content: Text(
+          success ? 'Radar watcher cancelled.' : 'Failed to cancel watcher.',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
+      ),
+    );
+  }
 
   Future<void> _handleLogout() async {
     final confirmed = await showDialog<bool>(
@@ -182,9 +201,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ],
                             ),
                             const SizedBox(height: 8),
-                            const Text(
-                              'Bohdan • +91 98765 43210\n42 Tech Park Avenue, Koramangala, Bengaluru, 560034',
-                              style: TextStyle(
+                            Text(
+                              '${SupabaseAuthService().userName} • +91 98765 43210\n42 Tech Park Avenue, Koramangala, Bengaluru, 560034',
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 12.5,
                                 height: 1.35,
@@ -302,8 +321,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 Container(
                                   width: 8,
                                   height: 8,
-                                  decoration: const BoxDecoration(
-                                    color: BrikTheme.brandNavy,
+                                  decoration: BoxDecoration(
+                                    color: context.watch<WatcherProvider>().watchers.isNotEmpty
+                                        ? BrikTheme.brandNavy
+                                        : BrikTheme.textSecondaryOnDark,
                                     shape: BoxShape.circle,
                                   ),
                                 ),
@@ -314,8 +335,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                               ],
                             ),
-                            const PillBadge(
-                              text: '1 ACTIVE',
+                            PillBadge(
+                              text: '${context.watch<WatcherProvider>().activeCount} ACTIVE',
                               backgroundColor: BrikTheme.brandNavy,
                               textColor: Colors.white,
                               fontSize: 9.5,
@@ -327,49 +348,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           'Celery + Redis background workers monitoring your products.',
                           style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11.5),
                         ),
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: BrikTheme.cardSurfaceSecondary,
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                        if (context.watch<WatcherProvider>().watchers.isEmpty) ...
+                          [
+                            const SizedBox(height: 12),
+                            const Text(
+                              'No active watchers. Open a product and tap Watch to start monitoring.',
+                              style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11.5),
+                            ),
+                          ]
+                        else
+                          ...context.watch<WatcherProvider>().watchers.map((watcher) {
+                            final wId = watcher['id']?.toString() ?? '';
+                            final prodName = watcher['product']?['name']?.toString() ?? watcher['search_query']?.toString() ?? 'Monitored Product';
+                            final targetVal = watcher['target_price']?.toString() ?? watcher['target_value']?.toString() ?? '1800';
+                            final cond = 'PRICE_DROP · Target ₹$targetVal · Active';
+
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 10),
+                              child: Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: BrikTheme.cardSurfaceSecondary,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Text(
-                                      'boAt Rockerz 550',
-                                      style: TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            prodName,
+                                            style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            cond,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                    SizedBox(height: 2),
-                                    Text(
-                                      'PRICE_DROP · Target ₹1,800 · Now ₹1,999',
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
+                                    const SizedBox(width: 8),
+                                    GestureDetector(
+                                      onTap: () => _cancelWatcher(context, wId),
+                                      child: Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: BrikTheme.cardSurface,
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(color: BrikTheme.cardBorder),
+                                        ),
+                                        child: const Icon(Icons.close_rounded, color: BrikTheme.textSecondaryOnDark, size: 14),
+                                      ),
                                     ),
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              GestureDetector(
-                                onTap: () {},
-                                child: Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color: BrikTheme.cardSurface,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(color: BrikTheme.cardBorder),
-                                  ),
-                                  child: const Icon(Icons.close_rounded, color: BrikTheme.textSecondaryOnDark, size: 14),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                            );
+                          }),
                       ],
                     ),
                   ),

@@ -11,8 +11,8 @@ class PillBadge extends StatelessWidget {
   const PillBadge({
     super.key,
     required this.text,
-    this.backgroundColor = BrikTheme.accentLavender,
-    this.textColor = BrikTheme.cardSurface,
+    this.backgroundColor = BrikTheme.brandNavy,
+    this.textColor = Colors.white,
     this.fontSize = 11.5,
     this.padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
   });

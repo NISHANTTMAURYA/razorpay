@@ -23,7 +23,7 @@ class AgentThinkingPill extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: isCompleted
-              ? BrikTheme.accentLavender.withValues(alpha: 0.5)
+              ? Colors.white.withValues(alpha: 0.5)
               : BrikTheme.cardBorder,
           width: 1,
         ),
@@ -37,21 +37,21 @@ class AgentThinkingPill extends StatelessWidget {
               height: 12,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: BrikTheme.accentLavender,
+                color: Colors.white,
               ),
             )
           else
             const Icon(
               Icons.check_circle_rounded,
               size: 14,
-              color: BrikTheme.accentLavender,
+              color: Colors.white,
             ),
           const SizedBox(width: 8),
           Flexible(
             child: Text(
               stepName,
               style: const TextStyle(
-                color: BrikTheme.accentLavender,
+                color: Colors.white,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),

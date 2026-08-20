@@ -15,6 +15,14 @@ class ProductSerializer(serializers.ModelSerializer):
     merchant = MerchantSerializer(read_only=True)
     category = CategorySerializer(read_only=True)
     discount_percentage = serializers.ReadOnlyField()
+    is_platform_product = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()
+
+    def get_is_platform_product(self, obj):
+        return True
+
+    def get_source(self, obj):
+        return "MERCHANT_API"
 
     class Meta:
         model = Product
@@ -22,7 +30,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'merchant', 'category', 'name', 'brand', 'description',
             'price', 'original_price', 'discount_percentage', 'currency',
             'rating', 'review_count', 'stock_quantity', 'images', 'attributes',
-            'is_featured', 'is_available'
+            'is_featured', 'is_available', 'is_platform_product', 'source'
         ]
 
 class CartItemSerializer(serializers.ModelSerializer):

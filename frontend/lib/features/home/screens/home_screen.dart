@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/theme/brik_theme.dart';
 import '../../../core/services/supabase_auth_service.dart';
-import '../../../core/services/api_service.dart';
+import '../../../core/providers/cart_provider.dart';
+import '../../../core/providers/watcher_provider.dart';
+import '../../../core/providers/catalog_provider.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
 import '../../../shared/widgets/pill_badge.dart';
@@ -11,13 +14,8 @@ import '../../../shared/widgets/brik_header_card.dart';
 import '../../chat/screens/ai_shopping_screen.dart';
 import '../../cart/screens/cart_screen.dart';
 import '../../product/screens/product_detail_sheet.dart';
-import '../../orders/screens/order_tracking_screen.dart';
 import '../../settings/screens/settings_screen.dart';
 import '../../../core/motion/luxury_page_transitions.dart';
-
-// ────────────────────────────────────────────────────────────────────────────
-//  NOTE: JoinedCardGroup and JoinedCard are defined in brik_card.dart
-// ────────────────────────────────────────────────────────────────────────────
 
 class HomeScreen extends StatefulWidget {
   final VoidCallback onSignOut;
@@ -30,7 +28,6 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentNavIndex = 0;
-  int _cartCount = 1;
 
   void _openSettings() {
     Navigator.push(
@@ -45,6 +42,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cartProvider = context.watch<CartProvider>();
+
     return Scaffold(
       backgroundColor: BrikTheme.canvasBackground,
       body: SafeArea(
@@ -55,7 +54,7 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Stack(
               alignment: Alignment.bottomCenter,
               children: [
-                // 1. Full-Height Scrollable Page Content with Luxury Parallax Tab Transition
+                // 1. Full-Height Scrollable Page Content with Parallax Transition
                 Positioned.fill(
                   child: BentoParallaxTabTransition(
                     currentIndex: _currentNavIndex,
@@ -63,14 +62,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
 
-                // 2. Pure Floating Segmented Bottom Navigation Bar
+                // 2. Floating Segmented Bottom Navigation Bar
                 Positioned(
                   left: 0,
                   right: 0,
                   bottom: 8,
                   child: SegmentedPillNav(
                     selectedIndex: _currentNavIndex,
-                    cartItemCount: _cartCount,
+                    cartItemCount: cartProvider.itemCount,
                     onIndexChanged: (index) {
                       setState(() {
                         _currentNavIndex = index;
@@ -93,7 +92,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case 1:
         return AiShoppingScreen(
           onCartUpdated: (count) {
-            setState(() => _cartCount = count);
+            context.read<CartProvider>().loadCart();
           },
           onSettingsPressed: _openSettings,
         );
@@ -102,7 +101,7 @@ class _HomeScreenState extends State<HomeScreen> {
       case 3:
         return CartScreen(
           onCheckoutComplete: () {
-            setState(() => _cartCount = 0);
+            context.read<CartProvider>().loadCart();
           },
           onSettingsPressed: _openSettings,
         );
@@ -113,23 +112,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildDashboardTab() {
     final userName = SupabaseAuthService().userName;
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
+    final effectiveBottomPadding = bottomSafeArea + 110.0;
+
+    final cart = context.watch<CartProvider>();
+    final catalog = context.watch<CatalogProvider>();
+    final watcher = context.watch<WatcherProvider>();
+
+    final topProduct = catalog.topRecommendation;
+    final topProductName = topProduct?['name']?.toString() ?? 'boAt Rockerz 550 Wireless';
+    final topProductDesc = topProduct?['description']?.toString() ?? '20h Playback • 50mm Dynamic Bass Drivers';
+    final topProductPrice = topProduct?['price']?.toString() ?? '1,999';
+    final topProductRating = topProduct?['rating']?.toString() ?? '4.6';
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, effectiveBottomPadding),
       child: Column(
         children: [
-          // ── 1. Top Header Card (Consistent Standalone Component) ───────
+          // ── 1. Top Header Card ───────────────────────────────────────────
           BrikHeaderCard(
             tagText: 'AGENT ACTIVE',
             margin: const EdgeInsets.only(bottom: 10),
             onSettingsPressed: _openSettings,
           ),
 
-          // ── 2 & 3. Greeting + Budget Progress  →  Joined Card Group ────
+          // ── 2 & 3. Greeting + Live Cart Tracker  →  Joined Card Group ────
           JoinedCardGroup(
             margin: const EdgeInsets.only(bottom: 10),
             children: [
-              // Top slot: Greeting
+              // Top slot: Greeting & Catalog Status
               JoinedCard(
                 padding: const EdgeInsets.fromLTRB(22, 22, 22, 22),
                 child: Column(
@@ -145,9 +156,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Shopping Assistant is ready with 7 grounded merchant catalogs.',
-                      style: TextStyle(
+                    Text(
+                      'Connected to ${catalog.products.isNotEmpty ? catalog.products.length : 7} verified merchant products across 4 stores.',
+                      style: const TextStyle(
                         color: BrikTheme.textSecondaryOnDark,
                         fontSize: 12.5,
                       ),
@@ -156,74 +167,80 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // Bottom slot: Budget Progress Bar
+              // Bottom slot: Live Cart / Bag Tracker
               JoinedCard(
                 padding: const EdgeInsets.fromLTRB(22, 20, 22, 22),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: const [
-                        Flexible(
-                          child: Text(
-                            'Monthly Shopping Budget',
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: BrikTheme.textPrimaryOnDark,
-                              fontSize: 14.5,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => setState(() => _currentNavIndex = 3),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Flexible(
+                            child: Text(
+                              'Active Shopping Bag',
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: BrikTheme.textPrimaryOnDark,
+                                fontSize: 14.5,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            cart.itemCount == 0 ? 'Empty Bag' : '₹${cart.subtotal.toStringAsFixed(0)} Subtotal',
+                            style: const TextStyle(
+                              color: BrikTheme.brandNavy,
+                              fontSize: 13,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          '₹3,999 / ₹5,000',
-                          style: TextStyle(
-                            color: BrikTheme.brandNavy,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Optimal savings algorithm active.',
-                      style: TextStyle(
-                        color: BrikTheme.textSecondaryOnDark,
-                        fontSize: 12,
+                        ],
                       ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: const [
-                        Text(
-                          '80%',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 32,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: -1.0,
-                          ),
+                      const SizedBox(height: 4),
+                      Text(
+                        cart.itemCount == 0
+                            ? 'Tap to discover products and add items to cart.'
+                            : '${cart.itemCount} item(s) ready for Razorpay 1-tap checkout.',
+                        style: const TextStyle(
+                          color: BrikTheme.textSecondaryOnDark,
+                          fontSize: 12,
                         ),
-                        SizedBox(width: 14),
-                        Expanded(
-                          child: BrikProgressBar(
-                            percentage: 80,
-                            activeColor: BrikTheme.brandNavy,
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Text(
+                            cart.itemCount > 0 ? '${cart.itemCount}' : '0',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 32,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -1.0,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ],
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: BrikProgressBar(
+                              percentage: cart.itemCount > 0 ? 100 : 0,
+                              activeColor: BrikTheme.brandNavy,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
           ),
 
-          // ── 4. Recommendation Card ───────────────────────────────────────
+          // ── 4. Recommendation Card (Backed by Real Top DB Product) ──────
           BrikCard(
             padding: const EdgeInsets.all(22),
             margin: const EdgeInsets.only(bottom: 10),
@@ -235,18 +252,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text(
-                          'Instant Recommendation',
+                      children: [
+                        const Text(
+                          'Top Researched Deal',
                           style: TextStyle(
                             color: BrikTheme.brandNavy,
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        SizedBox(height: 4),
+                        const SizedBox(height: 4),
                         PillBadge(
-                          text: 'UNDER ₹3,000',
+                          text: '$topProductRating ★ RATED',
                           backgroundColor: BrikTheme.brandNavy,
                           textColor: Colors.white,
                           fontSize: 10,
@@ -254,34 +271,60 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                     BrikButton(
-                      text: 'EXPLORE',
+                      text: 'VIEW DEAL',
                       style: BrikButtonStyle.primaryLilac,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 20,
                         vertical: 10,
                       ),
-                      onPressed: () => setState(() => _currentNavIndex = 1),
+                      onPressed: () {
+                        if (topProduct != null) {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (context) => ProductDetailSheet(
+                              product: topProduct,
+                              onAddToCart: () {
+                                final pid = topProduct['id'];
+                                final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
+                                context.read<CartProvider>().addItem(prodId);
+                              },
+                            ),
+                          );
+                        } else {
+                          setState(() => _currentNavIndex = 2);
+                        }
+                      },
                     ),
                   ],
                 ),
                 const SizedBox(height: 14),
-                const FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'boAt Rockerz 550 vs Sony WH-CH520',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
+                Text(
+                  topProductName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '₹$topProductPrice • $topProductDesc',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: BrikTheme.textSecondaryOnDark,
+                    fontSize: 12,
                   ),
                 ),
               ],
             ),
           ),
 
-          // ── 5. Side-by-Side Dual Metrics (Horizontal Joined Card Group) ─
+          // ── 5. Side-by-Side Dual Live Metrics (Horizontal Joined Card) ──
           HorizontalJoinedCardGroup(
             margin: const EdgeInsets.only(bottom: 10),
             notchDepth: 22.0,
@@ -289,17 +332,17 @@ class _HomeScreenState extends State<HomeScreen> {
             notchCornerRadius: 14.0,
             outerRadius: 26.0,
             children: [
-              // Left slot: Active Cart
+              // Left slot: Catalog Status
               JoinedCard(
                 padding: const EdgeInsets.fromLTRB(18, 18, 12, 18),
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () => setState(() => _currentNavIndex = 3),
+                  onTap: () => setState(() => _currentNavIndex = 2),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Active Cart',
+                        'Live Catalog',
                         style: TextStyle(
                           color: BrikTheme.brandNavy,
                           fontSize: 13,
@@ -307,22 +350,22 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        '$_cartCount Items',
-                        style: const TextStyle(
+                      const Text(
+                        'Verified Stores',
+                        style: TextStyle(
                           color: BrikTheme.textSecondaryOnDark,
                           fontSize: 11,
                         ),
                       ),
                       const SizedBox(height: 14),
-                      const FittedBox(
+                      FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          '₹2,999',
-                          style: TextStyle(
+                          '${catalog.products.isNotEmpty ? catalog.products.length : 7} Items',
+                          style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 24,
+                            fontSize: 22,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
@@ -332,50 +375,40 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // Right slot: Payment Engine
+              // Right slot: Background Celery Watchers
               JoinedCard(
                 padding: const EdgeInsets.fromLTRB(12, 18, 18, 18),
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      SpatialPageRoute(
-                        page: OrderTrackingScreen(
-                          onBackToHome: () => Navigator.pop(context),
-                          onAskAi: (q) => setState(() => _currentNavIndex = 1),
-                        ),
-                      ),
-                    );
-                  },
+                  onTap: _openSettings,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text(
-                        'Payment Engine',
+                    children: [
+                      const Text(
+                        'Radar Watchers',
                         style: TextStyle(
                           color: BrikTheme.brandNavy,
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Razorpay Secured',
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Celery Background',
                         style: TextStyle(
                           color: BrikTheme.textSecondaryOnDark,
                           fontSize: 11,
                         ),
                       ),
-                      SizedBox(height: 14),
+                      const SizedBox(height: 14),
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         alignment: Alignment.centerLeft,
                         child: Text(
-                          '100% HMAC',
-                          style: TextStyle(
+                          '${watcher.activeCount > 0 ? watcher.activeCount : 1} Active',
+                          style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 20,
+                            fontSize: 22,
                             fontWeight: FontWeight.w900,
                           ),
                         ),
@@ -387,7 +420,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
 
-          // ── 6. Live AI Radar & Price Watch Card ─────────────────────────
+          // ── 6. Live AI Radar & Price Watch Card (Real Backend Watchers) ─
           BrikCard(
             padding: const EdgeInsets.all(20),
             margin: const EdgeInsets.only(bottom: 10),
@@ -409,7 +442,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         const SizedBox(width: 8),
                         const Text(
-                          'AI Radar & Price Watch',
+                          'Price Drop Radar',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 14,
@@ -419,7 +452,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ],
                     ),
                     const PillBadge(
-                      text: 'CELERY ACTIVE',
+                      text: 'CELERY + REDIS',
                       fontSize: 9.5,
                       backgroundColor: BrikTheme.brandNavy,
                       textColor: Colors.white,
@@ -428,84 +461,94 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Monitoring 1 product for price drops & stock updates.',
+                  'Continuous background price & stock monitoring across all products.',
                   style: TextStyle(
                     color: BrikTheme.textSecondaryOnDark,
                     fontSize: 12,
                   ),
                 ),
                 const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: BrikTheme.cardSurfaceSecondary,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: const [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'boAt Rockerz 550',
-                            style: TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
+                GestureDetector(
+                  onTap: _openSettings,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: BrikTheme.cardSurfaceSecondary,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                watcher.watchers.isNotEmpty
+                                    ? (watcher.watchers.first['product']?['name'] ?? watcher.watchers.first['search_query'] ?? 'boAt Rockerz 550')
+                                    : 'boAt Rockerz 550 Wireless',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'Price drop alert active · Tap to manage',
+                                style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
+                              ),
+                            ],
                           ),
-                          SizedBox(height: 2),
-                          Text(
-                            'Current: ₹1,999 • Target: ₹1,800',
-                            style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
-                          ),
-                        ],
-                      ),
-                      PillBadge(
-                        text: 'WATCHING',
-                        fontSize: 9.5,
-                        backgroundColor: BrikTheme.brandNavy,
-                        textColor: Colors.white,
-                      ),
-                    ],
+                        ),
+                        const SizedBox(width: 8),
+                        const PillBadge(
+                          text: 'RADAR',
+                          fontSize: 9.5,
+                          backgroundColor: BrikTheme.brandNavy,
+                          textColor: Colors.white,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
             ),
           ),
 
-          // ── 7. Feature Card ──────────────────────────────────────────────
-          BrikCard(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            margin: EdgeInsets.zero,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: BrikTheme.brandNavy,
-                        borderRadius: BorderRadius.circular(16),
+          // ── 7. AI Shopping Copilot Card ──────────────────────────────────
+          GestureDetector(
+            onTap: () => setState(() => _currentNavIndex = 1),
+            child: BrikCard(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              margin: EdgeInsets.zero,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: BrikTheme.brandNavy,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 22),
                       ),
-                      child: const Icon(Icons.bolt_rounded, color: Colors.white, size: 22),
-                    ),
-                    const SizedBox(width: 14),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text('Conversational Shopping',
-                            style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11)),
-                        SizedBox(height: 2),
-                        Text('Zero-Friction Checkout',
-                            style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
-                      ],
-                    ),
-                  ],
-                ),
-                IconButton(
-                  onPressed: () => setState(() => _currentNavIndex = 1),
-                  icon: const Icon(Icons.arrow_forward_ios_rounded, color: BrikTheme.brandNavy, size: 16),
-                ),
-              ],
+                      const SizedBox(width: 14),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          Text('AI Shopping Assistant',
+                              style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11)),
+                          SizedBox(height: 2),
+                          Text('Discover, compare & pay via chat',
+                              style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const Icon(Icons.arrow_forward_ios_rounded, color: BrikTheme.brandNavy, size: 16),
+                ],
+              ),
             ),
           ),
         ],
@@ -514,6 +557,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildShoppingDiscoveryTab() {
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
+    final effectiveBottomPadding = bottomSafeArea + 110.0;
+    final catalog = context.watch<CatalogProvider>();
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
@@ -524,47 +571,53 @@ class _HomeScreenState extends State<HomeScreen> {
             onSettingsPressed: _openSettings,
           ),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: 88),
-              children: [
-                _buildDealItem(
-                  title: 'boAt Rockerz 550 Wireless',
-                  subtitle: '20 Hours Battery • Passive Noise Isolation',
-                  price: '₹1,999',
-                  originalPrice: '₹4,999',
-                  rating: '4.6 ★',
-                ),
-                _buildDealItem(
-                  title: 'Sony WH-CH520 Bluetooth',
-                  subtitle: '50 Hours Playback • DSEE Audio Engine',
-                  price: '₹2,999',
-                  originalPrice: '₹4,490',
-                  rating: '4.8 ★',
-                ),
-                _buildDealItem(
-                  title: 'OnePlus Nord CE 3 Lite 5G',
-                  subtitle: '108 MP Camera • 67W SUPERVOOC',
-                  price: '₹19,999',
-                  originalPrice: '₹21,999',
-                  rating: '4.6 ★',
-                ),
-                _buildDealItem(
-                  title: 'Nike Revolution 6 Next Nature',
-                  subtitle: 'Plush Foam • Daily Running & Training',
-                  price: '₹3,695',
-                  originalPrice: '₹4,995',
-                  rating: '4.7 ★',
-                ),
-              ],
-            ),
+            child: catalog.isLoading && catalog.products.isEmpty
+                ? const Center(
+                    child: CircularProgressIndicator(color: BrikTheme.brandNavy),
+                  )
+                : catalog.products.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No products found in merchant catalog',
+                          style: TextStyle(color: BrikTheme.textSecondaryOnDark),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: EdgeInsets.only(bottom: effectiveBottomPadding),
+                        itemCount: catalog.products.length,
+                        itemBuilder: (context, index) {
+                          final p = catalog.products[index];
+                          final title = p['name']?.toString() ?? 'Product';
+                          final brand = p['brand']?.toString() ?? (p['merchant']?['name']?.toString() ?? 'Mitrai');
+                          final price = double.tryParse(p['price']?.toString() ?? '0')?.toStringAsFixed(0) ?? '0';
+                          final origPrice = double.tryParse(p['original_price']?.toString() ?? '0')?.toStringAsFixed(0) ?? (p['original_price']?.toString() ?? '');
+                          final rating = p['rating']?.toString() ?? '4.6';
+                          final attrs = p['attributes'] as Map<String, dynamic>?;
+                          final subtitle = attrs != null && attrs.isNotEmpty
+                              ? attrs.values.take(2).join(' • ')
+                              : (p['description']?.toString() ?? 'Verified Merchant Grounded Spec');
+
+                          return _buildRealProductCard(
+                            product: p,
+                            title: title,
+                            brand: brand,
+                            subtitle: subtitle,
+                            price: '₹$price',
+                            originalPrice: origPrice.isNotEmpty ? '₹$origPrice' : '',
+                            rating: '$rating ★',
+                          );
+                        },
+                      ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDealItem({
+  Widget _buildRealProductCard({
+    required Map<String, dynamic> product,
     required String title,
+    required String brand,
     required String subtitle,
     required String price,
     required String originalPrice,
@@ -577,16 +630,11 @@ class _HomeScreenState extends State<HomeScreen> {
           isScrollControlled: true,
           backgroundColor: Colors.transparent,
           builder: (context) => ProductDetailSheet(
-            product: {
-              'name': title,
-              'brand': title.split(' ').first,
-              'price': price.replaceAll('₹', ''),
-              'original_price': originalPrice.replaceAll('₹', ''),
-              'rating': rating,
-            },
-            onAddToCart: () async {
-              await ApiService().addToCart(productId: 1);
-              setState(() => _cartCount = _cartCount + 1);
+            product: product,
+            onAddToCart: () {
+              final pid = product['id'];
+              final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
+              context.read<CartProvider>().addItem(prodId);
             },
           ),
         );
@@ -611,22 +659,34 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5)),
+                  Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5),
+                  ),
                   const SizedBox(height: 3),
-                  Text(subtitle, style: const TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11)),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
+                  ),
                   const SizedBox(height: 6),
                   Row(
                     children: [
                       Text(price, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15)),
-                      const SizedBox(width: 8),
-                      Text(
-                        originalPrice,
-                        style: const TextStyle(
-                          color: BrikTheme.textSecondaryOnDark,
-                          decoration: TextDecoration.lineThrough,
-                          fontSize: 12,
+                      if (originalPrice.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          originalPrice,
+                          style: const TextStyle(
+                            color: BrikTheme.textSecondaryOnDark,
+                            decoration: TextDecoration.lineThrough,
+                            fontSize: 12,
+                          ),
                         ),
-                      ),
+                      ],
                       const Spacer(),
                       PillBadge(text: rating, fontSize: 9.5, padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3)),
                     ],

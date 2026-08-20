@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../core/theme/brik_theme.dart';
+import '../../../core/services/supabase_auth_service.dart';
 import '../../../shared/widgets/brik_header_card.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
@@ -157,9 +158,9 @@ class OrderTrackingScreen extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        const Text(
-                          'Bohdan • +91 98765 43210\n42 Tech Park Avenue, Koramangala, Bengaluru, Karnataka - 560034',
-                          style: TextStyle(
+                        Text(
+                          '${SupabaseAuthService().userName} • +91 98765 43210\n42 Tech Park Avenue, Koramangala, Bengaluru, Karnataka - 560034',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 13,
                             height: 1.35,
@@ -184,26 +185,50 @@ class OrderTrackingScreen extends StatelessWidget {
                   ),
 
                   // 4. Action Buttons
-                  Row(
+                  Column(
                     children: [
-                      Expanded(
-                        child: BrikButton(
-                          text: 'Ask AI about Order',
-                          style: BrikButtonStyle.primaryLilac,
-                          icon: const Icon(Icons.auto_awesome, color: Colors.white, size: 16),
-                          onPressed: () {
-                            Navigator.pop(context);
-                            onAskAi?.call('Where is my order #$orderId?');
-                          },
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: BrikButton(
+                              text: 'Download Invoice',
+                              style: BrikButtonStyle.secondary,
+                              icon: const Icon(Icons.download_rounded, color: Colors.white, size: 16),
+                              onPressed: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    backgroundColor: BrikTheme.cardSurface,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                    content: Text(
+                                      'Invoice for Order #$orderId downloaded.',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: BrikButton(
+                              text: 'Ask AI',
+                              style: BrikButtonStyle.primaryLilac,
+                              icon: const Icon(Icons.auto_awesome, color: Colors.white, size: 16),
+                              onPressed: () {
+                                onAskAi?.call('Where is my order #$orderId?');
+                                onBackToHome();
+                              },
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: BrikButton(
-                          text: 'Back to Home',
-                          style: BrikButtonStyle.secondary,
-                          onPressed: onBackToHome,
-                        ),
+                      const SizedBox(height: 10),
+                      BrikButton(
+                        text: 'Back to Home',
+                        isFullWidth: true,
+                        style: BrikButtonStyle.secondary,
+                        onPressed: onBackToHome,
                       ),
                     ],
                   ),

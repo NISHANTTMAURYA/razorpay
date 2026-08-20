@@ -102,11 +102,11 @@ class _WavePainter extends CustomPainter {
       final opacity = (1.0 - (i / trailCount)) * 0.8;
 
       final glowPaint = Paint()
-        ..color = BrikTheme.accentLavender.withValues(alpha: opacity)
+        ..color = BrikTheme.brandNavy.withValues(alpha: opacity)
         ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4.0 + (i * 1.5));
 
       final solidPaint = Paint()
-        ..color = BrikTheme.accentLavenderLight.withValues(alpha: opacity);
+        ..color = Colors.white.withValues(alpha: opacity);
 
       canvas.drawCircle(lagPos, 14.0 - (i * 1.8), glowPaint);
       canvas.drawCircle(lagPos, 11.0 - (i * 1.5), solidPaint);

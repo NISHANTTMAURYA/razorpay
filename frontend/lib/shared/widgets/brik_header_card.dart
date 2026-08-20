@@ -91,16 +91,19 @@ class BrikHeaderCard extends StatelessWidget {
           if (trailing != null)
             trailing!
           else
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                if (tagText != null)
-                  PillBadge(
-                    text: tagText!,
-                    backgroundColor: tagBackgroundColor ?? BrikTheme.brandNavy,
-                    textColor: tagTextColor ?? Colors.white,
-                  ),
+            Flexible(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  if (tagText != null)
+                    Flexible(
+                      child: PillBadge(
+                        text: tagText!,
+                        backgroundColor: tagBackgroundColor ?? BrikTheme.brandNavy,
+                        textColor: tagTextColor ?? Colors.white,
+                      ),
+                    ),
                 if (onSettingsPressed != null) ...[
                   const SizedBox(width: 8),
                   GestureDetector(
@@ -131,6 +134,7 @@ class BrikHeaderCard extends StatelessWidget {
                 ],
               ],
             ),
+          ),
         ],
       ),
     );

@@ -1,15 +1,6 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
-
 class ApiConstants {
-  // Backend URL auto-detects localhost vs Android Emulator
+  // Backend URL works on physical Android (via adb reverse tcp:8000 tcp:8000), web & desktop
   static String get baseUrl {
-    if (kIsWeb) {
-      return 'http://127.0.0.1:8000';
-    }
-    if (Platform.isAndroid) {
-      return 'http://10.0.2.2:8000';
-    }
     return 'http://127.0.0.1:8000';
   }
 

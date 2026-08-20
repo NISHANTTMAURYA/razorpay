@@ -57,15 +57,19 @@ class BrikButton extends StatelessWidget {
       children: [
         if (icon != null) ...[
           icon!,
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
         ],
-        Text(
-          text.toUpperCase(),
-          style: TextStyle(
-            color: textColor,
-            fontSize: fontSize,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.0,
+        Flexible(
+          child: Text(
+            text.toUpperCase(),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            style: TextStyle(
+              color: textColor,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
           ),
         ),
       ],

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/theme/brik_theme.dart';
-import '../../../core/services/api_service.dart';
+import '../../../core/providers/cart_provider.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
 import '../../../shared/widgets/brik_header_card.dart';
@@ -8,7 +9,7 @@ import '../../../shared/widgets/pill_badge.dart';
 import '../../checkout/screens/checkout_sheet.dart';
 import '../../orders/screens/order_tracking_screen.dart';
 
-class CartScreen extends StatefulWidget {
+class CartScreen extends StatelessWidget {
   final VoidCallback? onCheckoutComplete;
   final VoidCallback? onSettingsPressed;
 
@@ -18,82 +19,16 @@ class CartScreen extends StatefulWidget {
     this.onSettingsPressed,
   });
 
-  @override
-  State<CartScreen> createState() => _CartScreenState();
-}
-
-class _CartScreenState extends State<CartScreen> {
-  Map<String, dynamic>? _cart;
-  bool _isLoading = true;
-  // Local quantity state keyed by product id
-  final Map<String, int> _quantities = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCart();
-  }
-
-  Future<void> _loadCart() async {
-    final cartData = await ApiService().getCart();
-    if (!mounted) return;
-    setState(() {
-      _cart = cartData;
-      _isLoading = false;
-      // Seed local quantities from cart items
-      for (final item in (cartData['items'] as List? ?? [])) {
-        final id = item['product']?['id']?.toString() ?? item['id']?.toString() ?? '';
-        if (id.isNotEmpty) {
-          _quantities[id] = (item['quantity'] as num?)?.toInt() ?? 1;
-        }
-      }
-    });
-  }
-
-  void _incrementQty(String id) => setState(() => _quantities[id] = (_quantities[id] ?? 1) + 1);
-  void _decrementQty(String id) {
-    final current = _quantities[id] ?? 1;
-    if (current <= 1) {
-      setState(() => _quantities.remove(id));
-    } else {
-      setState(() => _quantities[id] = current - 1);
-    }
-  }
-
-  List<Map<String, dynamic>> get _activeItems {
-    final items = (_cart?['items'] as List?) ?? [];
-    return items
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .where((item) {
-          final id = item['product']?['id']?.toString() ?? item['id']?.toString() ?? '';
-          return _quantities.containsKey(id);
-        })
-        .toList();
-  }
-
-  double get _subtotal {
-    double total = 0;
-    for (final item in _activeItems) {
-      final id = item['product']?['id']?.toString() ?? item['id']?.toString() ?? '';
-      final price = double.tryParse(item['unit_price']?.toString() ?? '0') ?? 0;
-      total += price * (_quantities[id] ?? 1);
-    }
-    return total;
-  }
-
-  void _openCheckout() {
-    if (_cart == null) return;
-    final cartWithQty = Map<String, dynamic>.from(_cart!);
-    cartWithQty['subtotal'] = _subtotal.toStringAsFixed(2);
+  void _openCheckout(BuildContext context, Map<String, dynamic> cart) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => CheckoutSheet(
-        cart: cartWithQty,
+        cart: cart,
         onOrderSuccess: () {
-          _loadCart();
-          widget.onCheckoutComplete?.call();
+          context.read<CartProvider>().clearCart();
+          onCheckoutComplete?.call();
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -109,25 +44,27 @@ class _CartScreenState extends State<CartScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final items = _activeItems;
+    final cartProvider = context.watch<CartProvider>();
+    final items = cartProvider.items;
+    final subtotalNum = cartProvider.subtotal;
     const discount = 500.0;
-    final subtotalNum = _isLoading
-        ? (double.tryParse(_cart?['subtotal']?.toString() ?? '2999') ?? 2999.0)
-        : _subtotal;
-    final total = (subtotalNum - discount).clamp(0.0, double.infinity);
+    final total = (subtotalNum - (subtotalNum > 0 ? discount : 0)).clamp(0.0, double.infinity);
+
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
+    final effectiveBottomPadding = bottomSafeArea + 110.0;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 88),
+      padding: EdgeInsets.fromLTRB(16, 12, 16, effectiveBottomPadding),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           BrikHeaderCard(
             tagText: '${items.length} ITEMS IN CART',
             margin: const EdgeInsets.only(bottom: 10),
-            onSettingsPressed: widget.onSettingsPressed,
+            onSettingsPressed: onSettingsPressed,
           ),
 
-          if (_isLoading)
+          if (cartProvider.isLoading && items.isEmpty)
             const Expanded(child: Center(child: CircularProgressIndicator(color: BrikTheme.brandNavy)))
           else if (items.isEmpty)
             Expanded(
@@ -143,7 +80,7 @@ class _CartScreenState extends State<CartScreen> {
                     ),
                     SizedBox(height: 8),
                     Text(
-                      'Ask the AI Agent to discover products for you.',
+                      'Ask the AI Agent to discover products or browse the catalog.',
                       style: TextStyle(color: BrikTheme.textSecondaryOnDark),
                     ),
                   ],
@@ -190,8 +127,9 @@ class _CartScreenState extends State<CartScreen> {
                   // Cart Item Cards
                   ...items.map((item) {
                     final prod = item['product'] as Map<String, dynamic>? ?? {};
-                    final id = prod['id']?.toString() ?? item['id']?.toString() ?? '';
-                    final qty = _quantities[id] ?? 1;
+                    final pid = prod['id'] ?? item['id'] ?? 1;
+                    final prodId = pid is int ? pid : (int.tryParse(pid.toString()) ?? 1);
+                    final qty = (item['quantity'] as num?)?.toInt() ?? 1;
                     final unitPrice = double.tryParse(item['unit_price']?.toString() ?? '0') ?? 0;
                     final lineTotal = unitPrice * qty;
 
@@ -229,7 +167,7 @@ class _CartScreenState extends State<CartScreen> {
                                       style: const TextStyle(color: BrikTheme.brandNavy, fontSize: 13, fontWeight: FontWeight.w800),
                                     ),
                                     const SizedBox(width: 12),
-                                    // Quantity Stepper (functional)
+                                    // Quantity Stepper (fully wired to CartProvider)
                                     Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                                       decoration: BoxDecoration(
@@ -240,7 +178,11 @@ class _CartScreenState extends State<CartScreen> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           GestureDetector(
-                                            onTap: () => _decrementQty(id),
+                                            onTap: () {
+                                              if (qty > 1) {
+                                                context.read<CartProvider>().updateItemQuantity(prodId, qty - 1);
+                                              }
+                                            },
                                             child: const Padding(
                                               padding: EdgeInsets.all(4),
                                               child: Icon(Icons.remove, color: Colors.white, size: 14),
@@ -254,7 +196,9 @@ class _CartScreenState extends State<CartScreen> {
                                             ),
                                           ),
                                           GestureDetector(
-                                            onTap: () => _incrementQty(id),
+                                            onTap: () {
+                                              context.read<CartProvider>().addItem(prodId, quantity: 1);
+                                            },
                                             child: const Padding(
                                               padding: EdgeInsets.all(4),
                                               child: Icon(Icons.add, color: Colors.white, size: 14),
@@ -316,7 +260,7 @@ class _CartScreenState extends State<CartScreen> {
                     isFullWidth: true,
                     style: BrikButtonStyle.primaryLilac,
                     icon: const Icon(Icons.lock_outline_rounded, color: Colors.white, size: 18),
-                    onPressed: _openCheckout,
+                    onPressed: () => _openCheckout(context, cartProvider.cart),
                   ),
                 ],
               ),

@@ -20,11 +20,13 @@ class AgentChatView(APIView):
         if not message:
             return Response({"error": "Message is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        history = request.data.get("history", [])
         cart_id = request.data.get("cart_id")
         user_id = str(request.user.id) if request.user.is_authenticated else None
 
         result = CommerceAgentEngine.process_message(
             message=message,
+            history=history,
             user_id=user_id,
             cart_id=cart_id
         )

@@ -14,6 +14,7 @@ class SupabaseAuthService {
   // In-memory & persisted demo user state for guest mode or offline exploration
   User? _mockUser;
   bool _isGuest = false;
+  String? _storedUserName;
 
   bool get isAuthenticated => currentUser != null;
   bool get isGuest => _isGuest;
@@ -28,25 +29,25 @@ class SupabaseAuthService {
     return null;
   }
 
-  String get userId => currentUser?.id ?? 'demo_bohdan_123';
-  String get userEmail => currentUser?.email ?? 'bohdan@mitrai.ai';
-  String get userName {
-    if (currentUser?.userMetadata != null &&
-        currentUser!.userMetadata!['full_name'] != null) {
-      return currentUser!.userMetadata!['full_name'].toString();
-    }
-    return userEmail.split('@').first;
-  }
+  String get userId => currentUser?.id ?? 'user_shopper_01';
+  String get userEmail => currentUser?.email ?? 'shopper@mitrai.ai';
+  String get userName =>
+      currentUser?.userMetadata?['full_name'] ??
+      currentUser?.userMetadata?['name'] ??
+      _storedUserName ??
+      'Shopper';
 
   Future<void> initialize() async {
     // 1. Restore local session from SharedPreferences
     try {
       final prefs = await SharedPreferences.getInstance();
+      _isGuest = prefs.getBool('is_guest_mode') ?? false;
+      _storedUserName = prefs.getString('user_name');
       final savedLogin = prefs.getBool('is_logged_in') ?? false;
       if (savedLogin) {
-        final name = prefs.getString('user_name') ?? 'Bohdan';
-        final email = prefs.getString('user_email') ?? 'bohdan@mitrai.ai';
-        final id = prefs.getString('user_id') ?? 'demo_bohdan_123';
+        final name = prefs.getString('user_name') ?? 'Shopper';
+        final email = prefs.getString('user_email') ?? 'shopper@mitrai.ai';
+        final id = prefs.getString('user_id') ?? 'user_shopper_01';
         final isGuest = prefs.getBool('is_guest') ?? true;
         _isGuest = isGuest;
         _mockUser = User(
@@ -158,12 +159,12 @@ class SupabaseAuthService {
   }
 
   Future<void> signInAsDemoUser({
-    String name = 'Bohdan',
-    String email = 'bohdan@mitrai.ai',
+    String name = 'Shopper',
+    String email = 'shopper@mitrai.ai',
   }) async {
     _isGuest = true;
     _mockUser = User(
-      id: 'demo_bohdan_123',
+      id: 'user_shopper_01',
       appMetadata: {},
       userMetadata: {
         'full_name': name,
@@ -180,7 +181,7 @@ class SupabaseAuthService {
       await prefs.setBool('is_guest', true);
       await prefs.setString('user_name', name);
       await prefs.setString('user_email', email);
-      await prefs.setString('user_id', 'demo_bohdan_123');
+      await prefs.setString('user_id', 'user_shopper_01');
     } catch (_) {}
   }
 
