@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/brik_theme.dart';
 import '../../../core/services/api_service.dart';
 import '../../../core/services/chat_storage_service.dart';
@@ -13,11 +14,13 @@ import '../../product/screens/product_detail_sheet.dart';
 class AiShoppingScreen extends StatefulWidget {
   final ValueChanged<int>? onCartUpdated;
   final VoidCallback? onSettingsPressed;
+  final String? initialMessage;
 
   const AiShoppingScreen({
     super.key,
     this.onCartUpdated,
     this.onSettingsPressed,
+    this.initialMessage,
   });
 
   @override
@@ -37,6 +40,11 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
   void initState() {
     super.initState();
     _initChatSession();
+    if (widget.initialMessage != null && widget.initialMessage!.trim().isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _sendMessage(widget.initialMessage!.trim());
+      });
+    }
   }
 
   Future<void> _initChatSession() async {
@@ -865,6 +873,9 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     final price = prod['price']?.toString() ?? '0';
     final rating = prod['rating']?.toString() ?? '4.6';
     final isPlatform = prod['is_platform_product'] != false && prod['source'] != 'SCRAPED_EXTERNAL';
+    final merchantName = prod['merchant']?['name']?.toString() ?? (isPlatform ? 'Direct Merchant' : 'Marketplace');
+
+    final externalUrl = prod['attributes']?['external_url']?.toString() ?? prod['external_url']?.toString() ?? '';
 
     // One single picture only
     final images = prod['images'] as List?;
@@ -875,13 +886,13 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     return GestureDetector(
       onTap: () => _openProductDetail(prod),
       child: Container(
-        width: 182,
+        width: 190,
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: BrikTheme.cardSurface,
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: isPlatform ? BrikTheme.brandNavy.withValues(alpha: 0.5) : BrikTheme.cardBorder,
+            color: isPlatform ? BrikTheme.brandNavy.withValues(alpha: 0.6) : BrikTheme.cardBorder,
             width: isPlatform ? 1.5 : 1.0,
           ),
         ),
@@ -902,7 +913,7 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
                       height: 95,
                       color: BrikTheme.cardSurfaceSecondary,
                       child: const Center(
-                        child: Icon(Icons.headphones_rounded, color: Colors.white, size: 28),
+                        child: Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 28),
                       ),
                     ),
                   ),
@@ -926,9 +937,9 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
             ),
             const SizedBox(height: 8),
 
-            // Differentiated Platform Status Badge
+            // Differentiated Platform vs Scraped Badge
             PillBadge(
-              text: isPlatform ? '● ON PLATFORM (1-TAP PAY)' : '🌐 EXTERNAL MARKETPLACE',
+              text: isPlatform ? '● MERCHANT DIRECT · 1-TAP' : '🌐 SCRAPED · ${merchantName.toUpperCase()}',
               backgroundColor: isPlatform ? BrikTheme.brandNavy : BrikTheme.cardSurfaceSecondary,
               textColor: Colors.white,
               fontSize: 7.5,
@@ -949,7 +960,7 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
             ),
             const Spacer(),
 
-            // Price & Brand
+            // Price & Brand / External Link
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -961,14 +972,41 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
                     fontSize: 13,
                   ),
                 ),
-                Text(
-                  brand,
-                  style: const TextStyle(
-                    color: BrikTheme.textSecondaryOnDark,
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w500,
+                if (!isPlatform && externalUrl.isNotEmpty) ...[
+                  GestureDetector(
+                    onTap: () async {
+                      final uri = Uri.parse(externalUrl);
+                      if (await canLaunchUrl(uri)) {
+                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: BrikTheme.cardSurfaceSecondary,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: BrikTheme.cardBorder),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Text('LINK', style: TextStyle(color: BrikTheme.brandNavy, fontSize: 8.5, fontWeight: FontWeight.w700)),
+                          SizedBox(width: 2),
+                          Icon(Icons.open_in_new_rounded, color: BrikTheme.brandNavy, size: 9),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+                ] else ...[
+                  Text(
+                    brand,
+                    style: const TextStyle(
+                      color: BrikTheme.textSecondaryOnDark,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ],
             ),
           ],

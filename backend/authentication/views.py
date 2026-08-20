@@ -32,13 +32,19 @@ class SyncSupabaseUserView(APIView):
         if not supabase_uid:
             supabase_uid = f"guest_{data['email'].split('@')[0]}"
 
+        defaults = {
+            'email': data['email'],
+            'full_name': data.get('full_name', ''),
+            'avatar_url': data.get('avatar_url', ''),
+        }
+        if data.get('phone'):
+            defaults['phone'] = data['phone']
+        if data.get('delivery_address'):
+            defaults['delivery_address'] = data['delivery_address']
+
         profile, created = UserProfile.objects.update_or_create(
             supabase_uid=supabase_uid,
-            defaults={
-                'email': data['email'],
-                'full_name': data.get('full_name', ''),
-                'avatar_url': data.get('avatar_url', ''),
-            }
+            defaults=defaults
         )
 
         return Response({
@@ -54,15 +60,32 @@ class UserProfileView(APIView):
         if request.user and request.user.is_authenticated and hasattr(request.user, 'profile'):
             return Response(UserProfileSerializer(request.user.profile).data)
         
-        # Default guest / demo profile
         uid = request.query_params.get('uid', 'demo_user')
         profile, _ = UserProfile.objects.get_or_create(
             supabase_uid=uid,
             defaults={
-                'email': 'demo@mitrai.ai',
+                'email': 'shopper@mitrai.ai',
                 'full_name': 'Mitrai Explorer',
                 'typical_budget': 5000.00,
                 'preferred_categories': ['Smartphones', 'Audio', 'Footwear']
             }
         )
         return Response(UserProfileSerializer(profile).data)
+
+    def patch(self, request):
+        uid = request.data.get('supabase_uid') or request.query_params.get('uid', 'demo_user')
+        profile, _ = UserProfile.objects.get_or_create(supabase_uid=uid)
+
+        for field in [
+            'full_name', 'email', 'phone', 'avatar_url', 'delivery_address',
+            'latitude', 'longitude', 'city', 'state', 'pincode',
+            'location_permission_granted', 'notifications_enabled',
+            'typical_budget', 'preferred_categories', 'preferred_brands'
+        ]:
+            if field in request.data:
+                setattr(profile, field, request.data[field])
+        profile.save()
+        return Response(UserProfileSerializer(profile).data)
+
+    def post(self, request):
+        return self.patch(request)

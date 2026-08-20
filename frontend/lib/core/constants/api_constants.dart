@@ -1,12 +1,25 @@
 class ApiConstants {
-  // Backend URL works on physical Android (via adb reverse tcp:8000 tcp:8000), web & desktop
+  // Backend URL works on physical Android, web & desktop
   static String get baseUrl {
     return 'http://127.0.0.1:8000';
   }
 
-  // Supabase Configuration (Placeholder defaults or injected via env)
-  static const String supabaseUrl = 'https://xyzcompany.supabase.co';
-  static const String supabaseAnonKey = 'sb_anon_key_mitrai_placeholder';
+  // Supabase Configuration
+  static String _supabaseUrl = 'https://xyzcompany.supabase.co';
+  static String _supabaseAnonKey = 'sb_anon_key_mitrai_placeholder';
+
+  static String get supabaseUrl => _supabaseUrl;
+  static String get supabaseAnonKey => _supabaseAnonKey;
+
+  static bool get isRealSupabaseConfigured =>
+      !_supabaseUrl.contains('xyzcompany.supabase.co') &&
+      !_supabaseAnonKey.contains('placeholder') &&
+      _supabaseUrl.startsWith('https://');
+
+  static void setSupabaseConfig(String url, String anonKey) {
+    _supabaseUrl = url.trim();
+    _supabaseAnonKey = anonKey.trim();
+  }
 
   // Razorpay Test Key
   static const String razorpayKeyId = 'rzp_test_TS9z7ilhd69feu';

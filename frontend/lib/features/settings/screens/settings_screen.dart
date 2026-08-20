@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/brik_theme.dart';
 import '../../../core/services/supabase_auth_service.dart';
-import '../../../core/providers/watcher_provider.dart';
+import '../../../core/services/api_service.dart';
+import '../../../core/services/permission_service.dart';
 import '../../../shared/widgets/brik_header_card.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
@@ -18,25 +19,263 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _priceAlerts = true;
-  bool _voiceShopping = true;
-  bool _fastCheckout = true;
+  String _deliveryAddress = '';
+  String _phoneNumber = '';
+  String _userDisplayName = '';
+  bool _notificationsEnabled = false;
+  bool _isDetectingLocation = false;
+  List<Map<String, dynamic>> _watchers = [];
+  bool _isLoading = true;
 
-  void _cancelWatcher(BuildContext context, String id) async {
+  @override
+  void initState() {
+    super.initState();
+    _loadProfileAndSettings();
+  }
+
+  Future<void> _loadProfileAndSettings() async {
+    final auth = SupabaseAuthService();
+    String name = auth.userName;
+    String address = '';
+    String phone = '';
+    bool notifs = false;
+
+    // 1. Read local cache
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      address = prefs.getString('pref_delivery_address') ?? '';
+      phone = prefs.getString('pref_phone_number') ?? '';
+      notifs = prefs.getBool('pref_notifications_enabled') ?? false;
+      final savedName = prefs.getString('user_name');
+      if (savedName != null && savedName.trim().isNotEmpty) {
+        name = savedName.trim();
+      }
+    } catch (_) {}
+
+    // 2. Fetch backend profile to sync if available
+    final backendProfile = await ApiService().getUserProfile();
+    if (backendProfile != null) {
+      if (backendProfile['delivery_address'] != null && backendProfile['delivery_address'].toString().trim().isNotEmpty) {
+        address = backendProfile['delivery_address'].toString().trim();
+      }
+      if (backendProfile['phone'] != null && backendProfile['phone'].toString().trim().isNotEmpty) {
+        phone = backendProfile['phone'].toString().trim();
+      }
+      if (backendProfile['full_name'] != null && backendProfile['full_name'].toString().trim().isNotEmpty) {
+        name = backendProfile['full_name'].toString().trim();
+      }
+      if (backendProfile['notifications_enabled'] != null) {
+        notifs = backendProfile['notifications_enabled'] == true;
+      }
+    }
+
+    // 3. Fetch active watchers
+    final watchersList = await ApiService().getWatchers();
+
+    if (!mounted) return;
+    setState(() {
+      _userDisplayName = name;
+      _deliveryAddress = address;
+      _phoneNumber = phone;
+      _notificationsEnabled = notifs;
+      _watchers = watchersList;
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _detectCurrentLocation() async {
+    setState(() => _isDetectingLocation = true);
     final messenger = ScaffoldMessenger.of(context);
-    final provider = context.read<WatcherProvider>();
-    final success = await provider.removeWatcher(id);
+    
+    final result = await PermissionService().requestLocationAndFetchAddress();
+    if (!mounted) return;
+    setState(() => _isDetectingLocation = false);
+
+    if (result != null && result.formattedAddress.isNotEmpty) {
+      setState(() {
+        _deliveryAddress = result.formattedAddress;
+      });
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: BrikTheme.brandNavy,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          content: Text(
+            'Location detected: ${result.city.isNotEmpty ? result.city : "Address updated"} & saved to DB.',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          backgroundColor: BrikTheme.brandNavy,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          content: const Text(
+            'Location permission denied or unavailable.',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleNotificationPermission(bool value) async {
+    setState(() => _notificationsEnabled = value);
+    if (value) {
+      await PermissionService().requestNotificationPermission();
+    } else {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('pref_notifications_enabled', false);
+      await ApiService().updateUserProfile({'notifications_enabled': false});
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: BrikTheme.brandNavy,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          content: Text(
+            value ? 'Notification permissions enabled & saved in DB.' : 'Notifications disabled.',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _cancelWatcher(String id) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final success = await ApiService().deleteWatcher(id);
+    if (success) {
+      setState(() {
+        _watchers.removeWhere((w) => w['id']?.toString() == id);
+      });
+    }
     messenger.showSnackBar(
       SnackBar(
-        backgroundColor: BrikTheme.cardSurface,
+        backgroundColor: BrikTheme.brandNavy,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         content: Text(
-          success ? 'Radar watcher cancelled.' : 'Failed to cancel watcher.',
+          success ? 'Radar watcher removed.' : 'Failed to cancel watcher on server.',
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
         ),
       ),
     );
+  }
+
+  Future<void> _editProfileDialog() async {
+    final nameController = TextEditingController(text: _userDisplayName);
+    final phoneController = TextEditingController(text: _phoneNumber);
+    final addressController = TextEditingController(text: _deliveryAddress);
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: BrikTheme.cardSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: const Text(
+          'Edit Profile & Delivery Address',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                decoration: InputDecoration(
+                  labelText: 'Full Name',
+                  labelStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark),
+                  filled: true,
+                  fillColor: BrikTheme.cardSurfaceSecondary,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: phoneController,
+                keyboardType: TextInputType.phone,
+                style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                decoration: InputDecoration(
+                  labelText: 'Phone Number',
+                  labelStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark),
+                  filled: true,
+                  fillColor: BrikTheme.cardSurfaceSecondary,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: addressController,
+                maxLines: 3,
+                style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                decoration: InputDecoration(
+                  labelText: 'Delivery Address',
+                  labelStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark),
+                  filled: true,
+                  fillColor: BrikTheme.cardSurfaceSecondary,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL', style: TextStyle(color: BrikTheme.brandNavy, fontWeight: FontWeight.w700)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('SAVE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
+          ),
+        ],
+      ),
+    );
+
+    if (saved == true && mounted) {
+      final newName = nameController.text.trim();
+      final newPhone = phoneController.text.trim();
+      final newAddr = addressController.text.trim();
+
+      setState(() {
+        if (newName.isNotEmpty) _userDisplayName = newName;
+        _phoneNumber = newPhone;
+        _deliveryAddress = newAddr;
+      });
+
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        if (newName.isNotEmpty) await prefs.setString('user_name', newName);
+        await prefs.setString('pref_phone_number', newPhone);
+        await prefs.setString('pref_delivery_address', newAddr);
+      } catch (_) {}
+
+      await ApiService().updateUserProfile({
+        'full_name': _userDisplayName,
+        'phone': _phoneNumber,
+        'delivery_address': _deliveryAddress,
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: BrikTheme.brandNavy,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            content: const Text(
+              'Profile and address saved in DB.',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+            ),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _handleLogout() async {
@@ -50,7 +289,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
         ),
         content: const Text(
-          'Are you sure you want to end your active shopping session? Your cart and preferences will remain saved.',
+          'Are you sure you want to end your active shopping session?',
           style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 13.5, height: 1.35),
         ),
         actions: [
@@ -69,17 +308,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirmed == true) {
       await SupabaseAuthService().signOut();
       if (mounted) {
-        Navigator.pop(context); // Close settings screen
-        widget.onSignOut(); // Notify root to show login
+        Navigator.pop(context);
+        widget.onSignOut();
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final userName = SupabaseAuthService().userName;
-    final userEmail = SupabaseAuthService().userEmail;
-    final isGuest = SupabaseAuthService().isGuest;
+    final auth = SupabaseAuthService();
+    final userEmail = auth.userEmail;
+    final avatarUrl = auth.avatarUrl;
+    final isGuest = auth.isGuest;
+    final displayName = _userDisplayName.isNotEmpty ? _userDisplayName : auth.userName;
+    final bottomSafeArea = MediaQuery.of(context).padding.bottom;
+    final effectiveBottomPadding = bottomSafeArea + 32.0;
 
     return Scaffold(
       backgroundColor: BrikTheme.canvasBackground,
@@ -88,7 +331,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 540),
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+              padding: EdgeInsets.fromLTRB(16, 12, 16, effectiveBottomPadding),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -99,7 +342,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onBack: () => Navigator.pop(context),
                   ),
 
-                  // 2. Profile & Authentication Joined Card Group (Curved Ticket Notch Effect)
+                  // 2. Profile & Delivery Address (Curved Ticket Notch Effect)
                   JoinedCardGroup(
                     margin: const EdgeInsets.only(bottom: 12),
                     notchDepth: 28.0,
@@ -107,29 +350,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     notchCornerRadius: 16.0,
                     outerRadius: 28.0,
                     children: [
-                      // Top Slot: User Account Info
+                      // Top Slot: User Account Info (Real Photo, Name, Email)
                       JoinedCard(
                         padding: const EdgeInsets.fromLTRB(22, 22, 22, 22),
                         child: Row(
                           children: [
+                            // Profile Avatar
                             Container(
-                              width: 52,
-                              height: 52,
+                              width: 56,
+                              height: 56,
                               decoration: BoxDecoration(
                                 color: BrikTheme.brandNavy,
                                 shape: BoxShape.circle,
                                 border: Border.all(color: Colors.white, width: 2),
                               ),
-                              child: Center(
-                                child: Text(
-                                  userName.isNotEmpty ? userName[0].toUpperCase() : 'M',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ),
+                              clipBehavior: Clip.antiAlias,
+                              child: (avatarUrl != null && avatarUrl.isNotEmpty)
+                                  ? Image.network(
+                                      avatarUrl,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) => Center(
+                                        child: Text(
+                                          displayName.isNotEmpty ? displayName[0].toUpperCase() : 'U',
+                                          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
+                                        ),
+                                      ),
+                                    )
+                                  : Center(
+                                      child: Text(
+                                        displayName.isNotEmpty ? displayName[0].toUpperCase() : 'U',
+                                        style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900),
+                                      ),
+                                    ),
                             ),
                             const SizedBox(width: 14),
                             Expanded(
@@ -140,7 +392,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     children: [
                                       Flexible(
                                         child: Text(
-                                          userName,
+                                          displayName,
                                           overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
                                             color: Colors.white,
@@ -151,7 +403,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       ),
                                       const SizedBox(width: 8),
                                       PillBadge(
-                                        text: isGuest ? 'GUEST' : 'GOOGLE AUTH',
+                                        text: isGuest ? 'GUEST' : 'LOGGED IN',
                                         backgroundColor: BrikTheme.brandNavy,
                                         textColor: Colors.white,
                                         fontSize: 9,
@@ -159,13 +411,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       ),
                                     ],
                                   ),
-                                  const SizedBox(height: 3),
+                                  const SizedBox(height: 4),
                                   Text(
                                     userEmail,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(
                                       color: BrikTheme.textSecondaryOnDark,
-                                      fontSize: 12,
+                                      fontSize: 12.5,
                                     ),
                                   ),
                                 ],
@@ -175,7 +427,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ),
                       ),
 
-                      // Bottom Slot: Default Delivery Address
+                      // Bottom Slot: Saved Delivery Address
                       JoinedCard(
                         padding: const EdgeInsets.fromLTRB(22, 20, 22, 22),
                         child: Column(
@@ -183,39 +435,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           children: [
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: const [
-                                Text(
-                                  'Default Delivery Address',
+                              children: [
+                                const Text(
+                                  'Delivery Address',
                                   style: TextStyle(
                                     color: BrikTheme.brandNavy,
                                     fontSize: 13,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                PillBadge(
-                                  text: 'PRIMARY',
-                                  backgroundColor: BrikTheme.brandNavy,
-                                  textColor: Colors.white,
-                                  fontSize: 9,
+                                Row(
+                                  children: [
+                                    // GPS Location Detector Button
+                                    GestureDetector(
+                                      onTap: _isDetectingLocation ? null : _detectCurrentLocation,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        margin: const EdgeInsets.only(right: 6),
+                                        decoration: BoxDecoration(
+                                          color: BrikTheme.brandNavy,
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (_isDetectingLocation)
+                                              const SizedBox(
+                                                width: 10,
+                                                height: 10,
+                                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 1.5),
+                                              )
+                                            else
+                                              const Icon(Icons.my_location_rounded, color: Colors.white, size: 11),
+                                            const SizedBox(width: 4),
+                                            const Text('AUTO-LOCATE', style: TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w800)),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    GestureDetector(
+                                      onTap: _editProfileDialog,
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: BrikTheme.brandNavy,
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.edit_outlined, color: Colors.white, size: 11),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              _deliveryAddress.isNotEmpty ? 'EDIT' : 'ADD',
+                                              style: const TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.w800),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
                             const SizedBox(height: 8),
-                            Text(
-                              '${SupabaseAuthService().userName} • +91 98765 43210\n42 Tech Park Avenue, Koramangala, Bengaluru, 560034',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 12.5,
-                                height: 1.35,
+                            if (_deliveryAddress.isNotEmpty) ...[
+                              Text(
+                                '$displayName${_phoneNumber.isNotEmpty ? ' • $_phoneNumber' : ''}\n$_deliveryAddress',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12.5,
+                                  height: 1.35,
+                                ),
                               ),
-                            ),
+                            ] else ...[
+                              const Text(
+                                'No delivery address saved yet.\nTap AUTO-LOCATE or ADD to set your shipping address.',
+                                style: TextStyle(
+                                  color: BrikTheme.textSecondaryOnDark,
+                                  fontSize: 12,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
                     ],
                   ),
 
-                  // 3. AI & Commerce Engine Toggles Card
+                  // 3. Permissions & Notifications Card
                   BrikCard(
                     padding: const EdgeInsets.all(18),
                     margin: const EdgeInsets.only(bottom: 12),
@@ -223,7 +532,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'Commerce & AI Preferences',
+                          'Permissions & Alerts',
                           style: TextStyle(
                             color: BrikTheme.brandNavy,
                             fontSize: 13,
@@ -231,8 +540,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ),
                         ),
                         const SizedBox(height: 10),
-
-                        // Toggle 1: Fast Razorpay Checkout
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -240,65 +547,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: const [
-                                  Text('Razorpay Express Checkout', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5)),
+                                  Text(
+                                    'Price Drop & Order Notifications',
+                                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5),
+                                  ),
                                   SizedBox(height: 2),
-                                  Text('Cryptographic HMAC-SHA256 direct tokenization', style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11)),
+                                  Text(
+                                    'Receive real-time price radar & shipping alerts',
+                                    style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
+                                  ),
                                 ],
                               ),
                             ),
                             Switch(
-                              value: _fastCheckout,
+                              value: _notificationsEnabled,
                               activeThumbColor: Colors.white,
                               activeTrackColor: BrikTheme.brandNavy,
-                              onChanged: (val) => setState(() => _fastCheckout = val),
-                            ),
-                          ],
-                        ),
-                        const Divider(color: BrikTheme.cardBorder, height: 20),
-
-                        // Toggle 2: AI Price Radar
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: const [
-                                  Text('Multi-Store Price Radar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5)),
-                                  SizedBox(height: 2),
-                                  Text('Real-time Amazon & Flipkart price checks', style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11)),
-                                ],
-                              ),
-                            ),
-                            Switch(
-                              value: _priceAlerts,
-                              activeThumbColor: Colors.white,
-                              activeTrackColor: BrikTheme.brandNavy,
-                              onChanged: (val) => setState(() => _priceAlerts = val),
-                            ),
-                          ],
-                        ),
-                        const Divider(color: BrikTheme.cardBorder, height: 20),
-
-                        // Toggle 3: Conversational Voice Shopping
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: const [
-                                  Text('Voice & Natural Language Agent', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5)),
-                                  SizedBox(height: 2),
-                                  Text('LangGraph multi-step intent routing', style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11)),
-                                ],
-                              ),
-                            ),
-                            Switch(
-                              value: _voiceShopping,
-                              activeThumbColor: Colors.white,
-                              activeTrackColor: BrikTheme.brandNavy,
-                              onChanged: (val) => setState(() => _voiceShopping = val),
+                              onChanged: _toggleNotificationPermission,
                             ),
                           ],
                         ),
@@ -306,10 +571,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
 
-                  // 4. Active Watcher Radar Manager Card
+                  // 4. Active Watcher Radar Card (Real Backend Watchers Only)
                   BrikCard(
                     padding: const EdgeInsets.all(18),
-                    margin: const EdgeInsets.only(bottom: 12),
+                    margin: const EdgeInsets.only(bottom: 16),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -322,7 +587,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   width: 8,
                                   height: 8,
                                   decoration: BoxDecoration(
-                                    color: context.watch<WatcherProvider>().watchers.isNotEmpty
+                                    color: _watchers.isNotEmpty
                                         ? BrikTheme.brandNavy
                                         : BrikTheme.textSecondaryOnDark,
                                     shape: BoxShape.circle,
@@ -330,13 +595,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                                 const SizedBox(width: 8),
                                 const Text(
-                                  'Active Radar Watchers',
+                                  'Price Radar Watchers',
                                   style: TextStyle(color: BrikTheme.brandNavy, fontSize: 13, fontWeight: FontWeight.w700),
                                 ),
                               ],
                             ),
                             PillBadge(
-                              text: '${context.watch<WatcherProvider>().activeCount} ACTIVE',
+                              text: '${_watchers.length} ACTIVE',
                               backgroundColor: BrikTheme.brandNavy,
                               textColor: Colors.white,
                               fontSize: 9.5,
@@ -344,24 +609,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           ],
                         ),
                         const SizedBox(height: 10),
-                        const Text(
-                          'Celery + Redis background workers monitoring your products.',
-                          style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11.5),
-                        ),
-                        if (context.watch<WatcherProvider>().watchers.isEmpty) ...
-                          [
-                            const SizedBox(height: 12),
-                            const Text(
-                              'No active watchers. Open a product and tap Watch to start monitoring.',
-                              style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11.5),
-                            ),
-                          ]
-                        else
-                          ...context.watch<WatcherProvider>().watchers.map((watcher) {
+                        if (_isLoading) ...[
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 16),
+                            child: Center(child: CircularProgressIndicator(color: BrikTheme.brandNavy, strokeWidth: 2)),
+                          ),
+                        ] else if (_watchers.isEmpty) ...[
+                          const Text(
+                            'No active price watchers.',
+                            style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 12),
+                          ),
+                        ] else
+                          ..._watchers.map((watcher) {
                             final wId = watcher['id']?.toString() ?? '';
                             final prodName = watcher['product']?['name']?.toString() ?? watcher['search_query']?.toString() ?? 'Monitored Product';
-                            final targetVal = watcher['target_price']?.toString() ?? watcher['target_value']?.toString() ?? '1800';
-                            final cond = 'PRICE_DROP · Target ₹$targetVal · Active';
+                            final targetVal = watcher['target_price']?.toString() ?? watcher['target_value']?.toString() ?? '';
+                            final cond = targetVal.isNotEmpty
+                                ? 'Target: ₹$targetVal · Active'
+                                : 'Price Drop Alert · Active';
 
                             return Padding(
                               padding: const EdgeInsets.only(top: 10),
@@ -382,7 +647,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                             prodName,
                                             style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700),
                                           ),
-                                          const SizedBox(height: 2),
+                                          SizedBox(height: 2),
                                           Text(
                                             cond,
                                             overflow: TextOverflow.ellipsis,
@@ -393,7 +658,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ),
                                     const SizedBox(width: 8),
                                     GestureDetector(
-                                      onTap: () => _cancelWatcher(context, wId),
+                                      onTap: () => _cancelWatcher(wId),
                                       child: Container(
                                         padding: const EdgeInsets.all(6),
                                         decoration: BoxDecoration(
@@ -401,7 +666,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           borderRadius: BorderRadius.circular(10),
                                           border: Border.all(color: BrikTheme.cardBorder),
                                         ),
-                                        child: const Icon(Icons.close_rounded, color: BrikTheme.textSecondaryOnDark, size: 14),
+                                        child: const Icon(Icons.close_rounded, color: Colors.white, size: 14),
                                       ),
                                     ),
                                   ],
@@ -409,33 +674,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                             );
                           }),
-                      ],
-                    ),
-                  ),
-
-                  // 5. System & Architecture Information Card
-                  BrikCard(
-                    padding: const EdgeInsets.all(18),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'System & Session Telemetry',
-                          style: TextStyle(
-                            color: BrikTheme.brandNavy,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _buildInfoRow('Database Layer', 'Supabase Cloud Sync (Active)'),
-                        const SizedBox(height: 6),
-                        _buildInfoRow('Session Persistence', 'SharedPreferences Encrypted Cache'),
-                        const SizedBox(height: 6),
-                        _buildInfoRow('Engine Architecture', 'LangGraph Multi-Catalog v2.4'),
-                        const SizedBox(height: 6),
-                        _buildInfoRow('Security Standard', 'PCI-DSS 3.2 • Razorpay HMAC-SHA256'),
                       ],
                     ),
                   ),
@@ -454,16 +692,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildInfoRow(String label, String value) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(label, style: const TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11.5)),
-        Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 11.5)),
-      ],
     );
   }
 }

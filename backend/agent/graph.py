@@ -38,13 +38,21 @@ def intent_router_node(state: CommerceState, tracer: Optional[AgentExecutionTrac
 
     raw_msg = state["message"].strip().lower()
     clean_msg = re.sub(r'[^\w\s]', '', raw_msg)
-
-    # Keywords for shopping/product queries
+    # Keywords for shopping/product queries & 24+ partner brands
     product_keywords = [
-        'headphone', 'earphone', 'earbud', 'phone', 'mobile', 'smartphone', 'shoe', 'sneaker', 'running',
-        'boat', 'sony', 'oneplus', 'redmi', 'xiaomi', 'nike', 'puma', 'samsung', 'apple',
+        'headphone', 'earphone', 'earbud', 'audio', 'tws', 'speaker', 'soundbar', 'neckband',
+        'phone', 'mobile', 'smartphone', '5g', 'android', 'iphone',
+        'shoe', 'shoes', 'sneaker', 'sneakers', 'running', 'boots', 'loafers', 'sandals', 'footwear',
+        'watch', 'watches', 'smartwatch', 'wearable', 'ring', 'tracker',
+        'shirt', 'tshirt', 't-shirt', 'trousers', 'pants', 'jogger', 'hoodie', 'apparel', 'fashion',
+        'sunscreen', 'oil', 'facewash', 'face wash', 'scrub', 'serum', 'skincare', 'hair', 'shaving', 'razor', 'beard',
+        'coffee', 'cold brew', 'protein', 'chocolate', 'snack', 'nutrition',
+        'boat', 'noise', 'fireboltt', 'boult', 'portronics', 'mivi', 'crossbeats', 'zebronics',
+        'lava', 'redtape', 'campus', 'sparx', 'woodland', 'snitch', 'souled', 'bewakoof',
+        'mamaearth', 'mcaffeine', 'bombay', 'sleepy', 'owl', 'whole truth',
+        'xiaomi', 'redmi', 'oneplus', 'samsung', 'apple', 'nike', 'puma', 'adidas', 'sony',
         'buy', 'purchase', 'shop', 'show me', 'recommend', 'looking for', 'find me', 'search for',
-        'under', 'below', 'less than', 'budget', 'price of', 'cost of', 'specs', 'best'
+        'under', 'below', 'less than', 'budget', 'price of', 'cost of', 'specs', 'best', 'deal', 'deals'
     ]
 
     # 1. Greetings and general chit-chat
@@ -54,8 +62,7 @@ def intent_router_node(state: CommerceState, tracer: Optional[AgentExecutionTrac
         'thanks', 'thank you', 'ok', 'okay', 'cool', 'nice', 'bye', 'goodbye', 'tell me a joke'
     ]
 
-    is_greeting = clean_msg in greetings or any(clean_msg == g or clean_msg.startswith(g + ' ') for g in greetings)
-    has_product_kw = any(kw in raw_msg for kw in product_keywords)
+    is_greeting = clean_msg in greetings
 
     if any(k in raw_msg for k in ['compare', ' vs ', 'difference between', 'better than', 'vs.']):
         intent = "COMPARE"
@@ -69,7 +76,7 @@ def intent_router_node(state: CommerceState, tracer: Optional[AgentExecutionTrac
         intent = "TRACK_ORDER"
     elif any(k in raw_msg for k in ['return policy', 'refund', 'warranty', 'delivery time', 'is it secure', 'payment methods']):
         intent = "FAQ_POLICY"
-    elif is_greeting or not has_product_kw:
+    elif is_greeting:
         intent = "GREETING"
     else:
         intent = "SEARCH_RECOMMEND"
@@ -112,6 +119,7 @@ def greeting_node(state: CommerceState, tracer: Optional[AgentExecutionTracer] =
 
 
 from commerce.merchant_clients import merchant_gateway
+from .research_service import research_engine, dynamic_marketplace_engine
 
 def search_recommend_node(state: CommerceState, tracer: Optional[AgentExecutionTracer] = None) -> Dict[str, Any]:
     step_db = tracer.start_step(
@@ -129,32 +137,71 @@ def search_recommend_node(state: CommerceState, tracer: Optional[AgentExecutionT
         val_str = price_match.group(1).replace(',', '')
         max_price = float(val_str[:-1]) * 1000 if val_str.endswith('k') else float(val_str)
 
-    # Clean search query keywords
-    raw_words = re.findall(r'\b\w+\b', msg)
-    stop_words = {'need', 'want', 'find', 'good', 'best', 'with', 'under', 'below', 'show', 'me', 'tell', 'about', 'some', 'give', 'looking', 'for', 'recommend', 'buy', 'shop'}
-    search_terms = [w for w in raw_words if len(w) > 2 and w not in stop_words]
-    search_query = " ".join(search_terms)
+    # Detect category intent with word boundaries (avoid 'phone' matching 'headphone')
+    category = None
+    if re.search(r'\b(?:headphone|headphones|earphone|earphones|earbud|earbuds|audio|tws|airpod|airpods|sound|speaker|soundbar|neckband)\b', msg):
+        category = "Audio"
+    elif re.search(r'\b(?:phone|phones|smartphone|smartphones|mobile|mobiles|5g|android|iphone)\b', msg):
+        category = "Smartphones"
+    elif re.search(r'\b(?:shoe|shoes|sneaker|sneakers|running|footwear|runner|boots|loafers|sandals)\b', msg):
+        category = "Footwear"
+    elif re.search(r'\b(?:watch|watches|smartwatch|smartwatches|wearable|wearables|ring|tracker)\b', msg):
+        category = "Wearables"
+    elif re.search(r'\b(?:shirt|shirts|tshirt|t-shirts|oversized|trousers|pants|hoodie|clothing|apparel|menswear|streetwear|tee)\b', msg):
+        category = "Fashion"
+    elif re.search(r'\b(?:hair|skin|facewash|face wash|scrub|oil|serum|sunscreen|grooming|razor|shaving|beard|beauty|lotion)\b', msg):
+        category = "Personal Care"
+    elif re.search(r'\b(?:coffee|cold brew|dark roast|protein|chocolate|snacks|nutrition|peanut butter|bars)\b', msg):
+        category = "Food & Nutrition"
 
-    # Query 10 merchant clients through gateway
-    matched_products = merchant_gateway.search_all_merchants(query=search_query, max_price=max_price)
-    if not matched_products and search_query:
-        matched_products = merchant_gateway.search_all_merchants(query="", max_price=max_price)
-
-    if not matched_products:
-        matched_products = merchant_gateway.search_all_merchants()[:4]
-
-    matched_products = matched_products[:4]
+    # 1. Query 24 on-platform merchant clients
+    platform_products = merchant_gateway.search_all_merchants(query=msg, category=category, max_price=max_price)
+    if not platform_products and category:
+        platform_products = merchant_gateway.search_all_merchants(category=category)
+    if not platform_products:
+        platform_products = merchant_gateway.search_all_merchants()[:2]
 
     if step_db:
         step_db.complete({
-            "matched_count": len(matched_products),
-            "top_match": matched_products[0]["name"] if matched_products else None,
-            "connected_merchants_queried": 10
+            "matched_count": len(platform_products),
+            "top_match": platform_products[0]["name"] if platform_products else None,
+            "detected_category": category,
+            "connected_merchants_queried": 24
         })
 
-    top_product = matched_products[0]
+    # 2. Dynamic Live Multi-Marketplace & Quick-Commerce Scraping
+    step_scrape = tracer.start_step(
+        step_name="Dynamic Marketplace & Quick-Commerce Scraping (Amazon, Flipkart, Blinkit, Zepto)",
+        description="Extracting real-time pricing and stock across external marketplaces and quick-commerce",
+        tool_name="search_all_external_marketplaces"
+    ) if tracer else None
 
-    # Multi-source research step
+    external_products = dynamic_marketplace_engine.search_all_external_marketplaces(
+        query=msg,
+        category=category,
+        max_price=max_price
+    )
+
+    if step_scrape:
+        step_scrape.complete({
+            "external_deals_found": len(external_products),
+            "marketplaces_queried": ["Amazon India", "Flipkart", "Blinkit", "Zepto", "Croma"]
+        })
+
+    # 3. Combine both: On-Platform Direct Merchants + External Marketplaces
+    all_matched = platform_products[:2] + external_products[:2]
+    top_product = platform_products[0] if platform_products else (all_matched[0] if all_matched else None)
+
+    if not top_product:
+        return {
+            "response_message": "There is an error right now. Please chat later.",
+            "products": [],
+            "comparison": None,
+            "cart": None,
+            "suggested_actions": []
+        }
+
+    # 4. Multi-source research step
     step_research = tracer.start_step(
         step_name="Multi-Source Review Research",
         description=f"Synthesizing YouTube tech reviews & Reddit sentiment for {top_product['name']}",
@@ -174,33 +221,40 @@ def search_recommend_node(state: CommerceState, tracer: Optional[AgentExecutionT
             "reddit_threads_analyzed": len(intelligence["reddit_discussions"])
         })
 
+    # External price mention
+    ext_price_info = ""
+    if external_products:
+        ext_top = external_products[0]
+        ext_price_info = f"\n• 🌐 **External Marketplaces**: Listed on **{ext_top['merchant']['name']}** at ₹{int(float(ext_top['price'])):,}."
+
     resp_msg = (
-        f"Based on live merchant inventory and multi-source sentiment from **YouTube (Geekyranjit / MKBHD)** and **Reddit (`r/IndiaTech`)**, "
+        f"Based on direct merchant inventory and live web scraping from **Amazon**, **Flipkart**, **YouTube**, and **Reddit (`r/IndiaTech`)**, "
         f"here is our grounded recommendation:\n\n"
         f"⭐ **{top_product['name']}** ({intelligence['overall_match_score']} Match Score • ₹{int(float(top_product['price'])):,})\n"
         f"• **Specs**: {top_product['description']}\n"
-        f"• **Merchant**: {top_product['merchant']['name']} (Verified 1-Tap Razorpay)\n"
+        f"• **Platform Deal**: {top_product['merchant']['name']} (Verified 1-Tap Razorpay){ext_price_info}\n"
         f"• **YouTube Consensus**: {intelligence['youtube_consensus']['verdict']}\n"
         f"• **Community Verdict**: {intelligence['recommendation_summary']}"
     )
 
     suggested = []
-    for p in matched_products[:2]:
+    for p in all_matched[:2]:
+        if p.get("is_platform_product", True):
+            suggested.append({
+                "label": f"Add {p['brand']} to Bag (₹{int(float(p['price'])):,})",
+                "action": "ADD_TO_CART",
+                "payload": {"product_id": p['id'], "quantity": 1}
+            })
+    if len(all_matched) >= 2:
         suggested.append({
-            "label": f"Add {p['brand']} to Bag (₹{int(float(p['price'])):,})",
-            "action": "ADD_TO_CART",
-            "payload": {"product_id": p['id'], "quantity": 1}
-        })
-    if len(matched_products) >= 2:
-        suggested.append({
-            "label": "Compare Top 2 Specs & Reviews",
+            "label": "Compare Specs Across Stores",
             "action": "COMPARE",
-            "payload": {"product_ids": [matched_products[0]['id'], matched_products[1]['id']]}
+            "payload": {"product_ids": [p['id'] for p in all_matched[:3]]}
         })
 
     return {
         "response_message": resp_msg,
-        "products": matched_products,
+        "products": all_matched,
         "comparison": None,
         "cart": None,
         "suggested_actions": suggested

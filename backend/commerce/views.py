@@ -260,6 +260,17 @@ class VerifyPaymentView(APIView):
                 'order': OrderSerializer(order).data
             }, status=status.HTTP_400_BAD_REQUEST)
 
+class OrderListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        user_id = request.query_params.get('user_id') or request.headers.get('X-User-ID')
+        orders = Order.objects.all().order_by('-created_at')
+        if user_id:
+            orders = orders.filter(user_id=user_id)
+        serializer = OrderSerializer(orders, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 class OrderDetailView(APIView):
     permission_classes = [AllowAny]
 

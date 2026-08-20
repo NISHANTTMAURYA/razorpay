@@ -10,6 +10,16 @@ class UserProfile(models.Model):
     full_name = models.CharField(max_length=255, blank=True)
     avatar_url = models.URLField(max_length=1024, blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True)
+    delivery_address = models.TextField(blank=True, default='')
+    
+    # Geolocation & Permissions
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    city = models.CharField(max_length=100, blank=True, default='')
+    state = models.CharField(max_length=100, blank=True, default='')
+    pincode = models.CharField(max_length=20, blank=True, default='')
+    location_permission_granted = models.BooleanField(default=False)
+    notifications_enabled = models.BooleanField(default=False)
     
     # Personalization preferences
     preferred_categories = models.JSONField(default=list, blank=True)

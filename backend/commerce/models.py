@@ -12,6 +12,17 @@ class Merchant(models.Model):
     rating = models.FloatField(default=4.8)
     razorpay_account_id = models.CharField(max_length=128, blank=True)
     is_active = models.BooleanField(default=True)
+
+    # Dynamic AI Routing & Merchant Capability Manifest Fields
+    api_endpoint = models.URLField(max_length=1024, blank=True, help_text="Live inventory & search REST/GraphQL endpoint")
+    auth_type = models.CharField(max_length=50, default="API_KEY", help_text="API_KEY, OAUTH2, HMAC")
+    categories = models.JSONField(default=list, blank=True, help_text="Categories served e.g. ['Audio', 'Wearables']")
+    brand_keywords = models.JSONField(default=list, blank=True, help_text="Recognized brand keywords and aliases")
+    min_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    max_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    capability_description = models.TextField(blank=True, help_text="Rich capability text for AI semantic routing & embeddings")
+    semantic_embedding = models.JSONField(default=list, blank=True, help_text="Pre-computed 768-dim/1536-dim text embedding vector")
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

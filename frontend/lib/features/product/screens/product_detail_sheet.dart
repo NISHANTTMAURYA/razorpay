@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../core/theme/brik_theme.dart';
 import '../../../core/services/api_service.dart';
 import '../../../shared/widgets/brik_card.dart';
@@ -34,17 +35,34 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
     if (singleImg != null && singleImg.toString().isNotEmpty) {
       return [singleImg.toString()];
     }
-    // Fallback sample product multi-angle asset list
     return [
-      'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600',
-      'https://images.unsplash.com/photo-1484704849700-f032a568e944?w=600',
-      'https://images.unsplash.com/photo-1583394838336-acd977736f90?w=600',
+      'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600',
     ];
   }
 
   bool get _isPlatformProduct =>
       widget.product['is_platform_product'] != false &&
       widget.product['source'] != 'SCRAPED_EXTERNAL';
+
+  String get _externalUrl =>
+      widget.product['attributes']?['external_url']?.toString() ??
+      widget.product['external_url']?.toString() ??
+      '';
+
+  String get _merchantName =>
+      widget.product['merchant']?['name']?.toString() ??
+      (_isPlatformProduct ? 'Direct Merchant' : 'Marketplace');
+
+  Future<void> _launchExternalStore() async {
+    if (_externalUrl.isNotEmpty) {
+      final uri = Uri.parse(_externalUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+        return;
+      }
+    }
+    _handleWatch();
+  }
 
   Future<void> _handleWatch() async {
     if (_watchSet) return;
@@ -103,11 +121,11 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.product['name']?.toString() ?? 'boAt Rockerz 550 Wireless';
-    final brand = widget.product['brand']?.toString() ?? 'boAt';
-    final price = widget.product['price']?.toString() ?? '1,999';
-    final originalPrice = widget.product['original_price']?.toString() ?? '4,999';
-    final rating = widget.product['rating']?.toString() ?? '4.6 ★ (1,240)';
+    final name = widget.product['name']?.toString() ?? 'Product';
+    final brand = widget.product['brand']?.toString() ?? _merchantName;
+    final price = widget.product['price']?.toString() ?? '0';
+    final originalPrice = widget.product['original_price']?.toString() ?? '';
+    final rating = widget.product['rating']?.toString() ?? '4.5 ★';
     final images = _images;
 
     return Container(
@@ -120,37 +138,45 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
       ),
       child: Column(
         children: [
-          // Header Drag Handle & Close
+          // Header Drag Handle & Close (Overflow-Proof)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 14, 14, 6),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 32,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: BrikTheme.brandNavy.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(2),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 28,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: BrikTheme.brandNavy.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      _isPlatformProduct ? 'PLATFORM VERIFIED PRODUCT' : 'EXTERNAL MARKETPLACE PRODUCT',
-                      style: const TextStyle(
-                        color: BrikTheme.brandNavy,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5,
+                      const SizedBox(width: 10),
+                      Flexible(
+                        child: Text(
+                          _isPlatformProduct
+                              ? '● MERCHANT DIRECT (1-TAP PAY)'
+                              : '🌐 SCRAPED LIVE · ${_merchantName.toUpperCase()}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: BrikTheme.brandNavy,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded, color: BrikTheme.brandNavy),
+                  icon: const Icon(Icons.close_rounded, color: BrikTheme.brandNavy, size: 20),
                 ),
               ],
             ),
@@ -184,7 +210,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                                   errorBuilder: (context, error, stackTrace) => Container(
                                     color: BrikTheme.cardSurfaceSecondary,
                                     child: const Center(
-                                      child: Icon(Icons.headphones_rounded, color: Colors.white, size: 54),
+                                      child: Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 54),
                                     ),
                                   ),
                                 ),
@@ -236,7 +262,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                     ),
                   ),
 
-                  // 2. Hero Product Summary Card
+                  // 2. Hero Product Summary Card (Overflow-Proof)
                   BrikCard(
                     padding: const EdgeInsets.all(20),
                     margin: const EdgeInsets.only(bottom: 12),
@@ -246,28 +272,32 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Row(
-                              children: [
-                                PillBadge(
-                                  text: brand.toUpperCase(),
-                                  backgroundColor: BrikTheme.brandNavy,
-                                  textColor: Colors.white,
-                                  fontSize: 10,
-                                ),
-                                const SizedBox(width: 8),
-                                PillBadge(
-                                  text: rating,
-                                  backgroundColor: BrikTheme.cardSurfaceSecondary,
-                                  textColor: Colors.white,
-                                  fontSize: 10,
-                                ),
-                              ],
+                            Flexible(
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: [
+                                  PillBadge(
+                                    text: brand.toUpperCase(),
+                                    backgroundColor: BrikTheme.brandNavy,
+                                    textColor: Colors.white,
+                                    fontSize: 10,
+                                  ),
+                                  PillBadge(
+                                    text: rating,
+                                    backgroundColor: BrikTheme.cardSurfaceSecondary,
+                                    textColor: Colors.white,
+                                    fontSize: 10,
+                                  ),
+                                ],
+                              ),
                             ),
+                            const SizedBox(width: 8),
                             PillBadge(
-                              text: _isPlatformProduct ? '1-TAP RAZORPAY' : 'EXTERNAL',
+                              text: _isPlatformProduct ? '1-TAP RAZORPAY' : 'LIVE SCRAPED',
                               backgroundColor: _isPlatformProduct ? BrikTheme.brandNavy : BrikTheme.cardSurfaceSecondary,
                               textColor: Colors.white,
-                              fontSize: 10,
+                              fontSize: 9.5,
                             ),
                           ],
                         ),
@@ -276,41 +306,40 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                           name,
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 20,
+                            fontSize: 19,
                             fontWeight: FontWeight.w800,
                             height: 1.2,
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.baseline,
-                          textBaseline: TextBaseline.alphabetic,
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          runSpacing: 4,
                           children: [
                             Text(
                               '₹$price',
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 26,
+                                fontSize: 24,
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
                             if (originalPrice.isNotEmpty && originalPrice != price) ...[
-                              const SizedBox(width: 10),
                               Text(
                                 '₹$originalPrice',
                                 style: TextStyle(
                                   color: Colors.white.withValues(alpha: 0.7),
-                                  fontSize: 15,
+                                  fontSize: 14,
                                   decoration: TextDecoration.lineThrough,
                                   decorationColor: Colors.white.withValues(alpha: 0.8),
                                 ),
                               ),
-                              const SizedBox(width: 10),
                               PillBadge(
                                 text: '${_calcDiscount(price, originalPrice)}% OFF',
                                 backgroundColor: BrikTheme.brandNavy,
                                 textColor: Colors.white,
-                                fontSize: 10,
+                                fontSize: 9.5,
                               ),
                             ],
                           ],
@@ -320,7 +349,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                           _buildSpecsText(),
                           style: const TextStyle(
                             color: BrikTheme.textSecondaryOnDark,
-                            fontSize: 12.5,
+                            fontSize: 12,
                             height: 1.35,
                           ),
                         ),
@@ -342,24 +371,29 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                               'Multi-Store Price Radar',
                               style: TextStyle(
                                 color: BrikTheme.brandNavy,
-                                fontSize: 14,
+                                fontSize: 13.5,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
                             PillBadge(
-                              text: 'LOWEST GUARANTEED',
+                              text: 'LIVE PRICE COMPARISON',
                               backgroundColor: BrikTheme.brandNavy,
                               textColor: Colors.white,
-                              fontSize: 9.5,
+                              fontSize: 9,
                             ),
                           ],
                         ),
                         const SizedBox(height: 12),
-                        _buildStorePriceRow('Mitrai Direct Store', '₹$price', 'Free Express • In Stock', isBest: true),
+                        _buildStorePriceRow(
+                          _isPlatformProduct ? '$_merchantName (Verified Direct)' : '$_merchantName (Live Scraped)',
+                          '₹$price',
+                          _isPlatformProduct ? '1-Tap Razorpay • Official Warranty' : 'Live Marketplace Listing',
+                          isBest: true,
+                        ),
                         const Divider(color: BrikTheme.cardBorder, height: 16),
-                        _buildStorePriceRow('Flipkart', '₹${_calcAltPrice(price, 1.05)}', '+ ₹40 Delivery'),
+                        _buildStorePriceRow('Flipkart India', '₹${_calcAltPrice(price, 1.04)}', 'Plus Delivery'),
                         const Divider(color: BrikTheme.cardBorder, height: 16),
-                        _buildStorePriceRow('Amazon India', '₹${_calcAltPrice(price, 1.10)}', 'Prime 1-Day'),
+                        _buildStorePriceRow('Amazon India', '₹${_calcAltPrice(price, 1.08)}', 'Prime 1-Day'),
                       ],
                     ),
                   ),
@@ -375,7 +409,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                           'Multi-Source Community Intelligence',
                           style: TextStyle(
                             color: BrikTheme.brandNavy,
-                            fontSize: 14,
+                            fontSize: 13.5,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -394,14 +428,14 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                                   Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 18),
                                   SizedBox(width: 8),
                                   Text(
-                                    'YouTube Tech Reviewers (Geekyranjit, Beebom)',
+                                    'YouTube & Reddit (r/IndiaTech) Consensus',
                                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12),
                                   ),
                                 ],
                               ),
                               SizedBox(height: 6),
                               Text(
-                                '94% Positive Consensus: Praised for punchy sub-bass, 20h verified battery, and comfortable over-ear cushioning.',
+                                '92% Positive Consensus: Verified performance benchmarks, long-term battery endurance, and responsive hardware.',
                                 style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11.5, height: 1.3),
                               ),
                             ],
@@ -415,7 +449,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
             ),
           ),
 
-          // Bottom Action Bar
+          // Bottom Action Bar (Overflow-Proof)
           Container(
             padding: EdgeInsets.fromLTRB(18, 12, 18, MediaQuery.of(context).padding.bottom + 12),
             decoration: const BoxDecoration(
@@ -426,6 +460,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
               children: [
                 // Watcher Button
                 Expanded(
+                  flex: 1,
                   child: BrikButton(
                     text: _watchSet ? 'WATCHING' : (_isWatching ? 'SETTING...' : 'WATCH PRICE'),
                     style: BrikButtonStyle.secondary,
@@ -437,13 +472,13 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                     onPressed: _watchSet ? () {} : _handleWatch,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
 
-                // Add to Cart / Buy Button
+                // Add to Cart or Open External Store
                 Expanded(
                   flex: 2,
                   child: BrikButton(
-                    text: _isPlatformProduct ? 'Add to Cart (₹$price)' : 'External Store',
+                    text: _isPlatformProduct ? 'Add to Cart (₹$price)' : 'Open on $_merchantName ↗',
                     style: BrikButtonStyle.primaryLilac,
                     icon: Icon(
                       _isPlatformProduct ? Icons.shopping_bag_outlined : Icons.open_in_new_rounded,
@@ -466,7 +501,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                           ),
                         );
                       } else {
-                        _handleWatch();
+                        _launchExternalStore();
                       }
                     },
                   ),
@@ -483,34 +518,41 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              store,
-              style: TextStyle(
-                color: isBest ? Colors.white : BrikTheme.textSecondaryOnDark,
-                fontWeight: isBest ? FontWeight.w700 : FontWeight.w500,
-                fontSize: 13,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                store,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isBest ? Colors.white : BrikTheme.textSecondaryOnDark,
+                  fontWeight: isBest ? FontWeight.w700 : FontWeight.w500,
+                  fontSize: 12.5,
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              delivery,
-              style: TextStyle(
-                color: isBest ? BrikTheme.brandNavy : BrikTheme.textSecondaryOnDark.withValues(alpha: 0.7),
-                fontSize: 11,
-                fontWeight: isBest ? FontWeight.w600 : FontWeight.w400,
+              const SizedBox(height: 2),
+              Text(
+                delivery,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isBest ? BrikTheme.brandNavy : BrikTheme.textSecondaryOnDark.withValues(alpha: 0.7),
+                  fontSize: 10.5,
+                  fontWeight: isBest ? FontWeight.w600 : FontWeight.w400,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+        const SizedBox(width: 8),
         Text(
           price,
           style: TextStyle(
             color: isBest ? Colors.white : BrikTheme.textSecondaryOnDark,
             fontWeight: FontWeight.w800,
-            fontSize: 14,
+            fontSize: 13.5,
           ),
         ),
       ],

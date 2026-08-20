@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Mitrai</string>
+    <string name="accessibility_service_description">Mitrai AI Shopping Copilot detects when you browse e-commerce or quick commerce apps (Amazon, Flipkart, Blinkit, Zepto, etc.) to show a smart comparison and coupon button right on your screen without switching apps.</string>
+</resources>

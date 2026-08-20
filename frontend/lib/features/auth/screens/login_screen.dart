@@ -22,14 +22,14 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
     await SupabaseAuthService().signInWithGoogle();
     setState(() => _isLoading = false);
-    widget.onLoginSuccess();
+
+    if (mounted) {
+      widget.onLoginSuccess();
+    }
   }
 
   void _handleGuestSignIn() {
-    SupabaseAuthService().signInAsDemoUser(
-      name: 'Shopper',
-      email: 'shopper@mitrai.ai',
-    );
+    SupabaseAuthService().signInAsDemoUser();
     widget.onLoginSuccess();
   }
 
@@ -41,11 +41,8 @@ class _LoginScreenState extends State<LoginScreen> {
 
     // Responsive sizing
     final cardMaxWidth = isDesktop ? math.min(540.0, screenWidth * 0.85) : 460.0;
-    // Logo covers ~46-48% of the card width for strong brand presence
     final logoWidth = cardMaxWidth * 0.48;
     final logoHeight = logoWidth * 0.32;
-
-    // Character depth sizing
     final characterHeight = isDesktop ? 330.0 : 290.0;
 
     return Scaffold(
@@ -82,7 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         const SizedBox(height: 16),
 
-                        // 2. Hero Title (Refined, cleaner size)
+                        // 2. Hero Title
                         Text(
                           'Natural-language\ncommerce experience.',
                           textAlign: TextAlign.center,
@@ -190,7 +187,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         // Layer 2: Overlapping Text & Auth Actions over the lower legs
                         Padding(
                           padding: EdgeInsets.only(
-                            top: characterHeight * 0.58, // Overlaps the lower legs
+                            top: characterHeight * 0.58,
                           ),
                           child: Container(
                             decoration: BoxDecoration(

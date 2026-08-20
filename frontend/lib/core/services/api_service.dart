@@ -10,10 +10,15 @@ class ApiService {
   ApiService._internal();
 
   Map<String, String> get _headers {
-    final userId = SupabaseAuthService().userId;
+    final auth = SupabaseAuthService();
+    final userId = auth.userId;
+    // Use mock_token_ prefix — backend's SupabaseAuthentication handles this
+    // for dev/Google Sign-In flow where no real Supabase JWT is available.
+    final token = 'mock_token_$userId';
     return {
       'Content-Type': 'application/json',
       'X-User-ID': userId,
+      'Authorization': 'Bearer $token',
     };
   }
 
@@ -241,5 +246,66 @@ class ApiService {
       debugPrint('DeleteWatcher API Error: $e');
       return false;
     }
+  }
+
+  // 6. User Profile & Backend Sync
+
+  /// Called once after login to write the authenticated user into the Django DB.
+  /// Uses POST /api/auth/sync-supabase/ which does update_or_create on supabase_uid.
+  Future<void> syncUserToBackend() async {
+    try {
+      final auth = SupabaseAuthService();
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/auth/sync-supabase/');
+      final response = await http.post(
+        url,
+        headers: _headers,
+        body: jsonEncode({
+          'supabase_uid': auth.userId,
+          'email': auth.userEmail,
+          'full_name': auth.userName,
+          if (auth.avatarUrl != null && auth.avatarUrl!.isNotEmpty)
+            'avatar_url': auth.avatarUrl,
+        }),
+      ).timeout(const Duration(seconds: 8));
+      debugPrint('SyncUser status: ${response.statusCode} body: ${response.body}');
+    } catch (e) {
+      debugPrint('SyncUser API Error: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getUserProfile() async {
+    try {
+      final uid = SupabaseAuthService().userId;
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/auth/profile/').replace(
+        queryParameters: {'uid': uid},
+      );
+      final response = await http.get(url, headers: _headers).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      debugPrint('GetUserProfile API Error: $e');
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> updateUserProfile(Map<String, dynamic> data) async {
+    try {
+      final uid = SupabaseAuthService().userId;
+      final payload = Map<String, dynamic>.from(data);
+      payload['supabase_uid'] = uid;
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/auth/profile/');
+      final response = await http.post(
+        url,
+        headers: _headers,
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      debugPrint('UpdateUserProfile API Error: $e');
+    }
+    return null;
   }
 }
