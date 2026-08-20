@@ -1,0 +1,8 @@
+# Mitrai — Core Platform Features
+
+1. **Cross-Platform Product Discovery & Extraction**: Search multiple e-commerce websites and retrieve the same/similar product from different merchants with unified normalization.
+2. **Price Comparison & Intelligent Product Comparison**: Compare prices, hardware specifications, ratings, availability, and delivery times, and recommend the best product for a specific requirement (e.g. “best phone under ₹30,000”).
+3. **Multi-Source Review Research**: Search and analyse YouTube tech reviews (Geekyranjit / MKBHD video consensus), Reddit discussions (`r/IndiaTech`, `r/gadgets`), blogs, articles, and web reviews to understand real-world opinions, durability, and battery endurance.
+4. **AI-Powered Grounded Recommendation**: Combine product specifications, live price, availability, and multi-source review sentiment to give an explainable personalized recommendation with transparent reasons and trade-offs.
+5. **Natural-Language Conversational Shopping**: User expresses needs naturally (e.g. “I need the best phone under ₹30k with a great camera and battery”), and the AI agent handles the research, comparison, cart management, and Razorpay-secured checkout.
+6. **Dynamic Product Watcher & Radar Alert Engine (Celery + Redis)**: Continuous asynchronous background monitoring based on dynamic user conditions (e.g. price drops below target threshold, back-in-stock notifications, new product launches in category, or custom spec matches like "alert me when a phone with 6000mAh battery launches under 20k").
