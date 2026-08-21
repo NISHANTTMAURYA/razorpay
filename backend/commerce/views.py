@@ -113,23 +113,23 @@ class CartItemManageView(APIView):
                 # Auto-sync merchant, category, and product into DB
                 m_info = m_prod.get('merchant') or {}
                 m_slug = m_info.get('slug') or 'general-merchant'
-                merchant, _ = Merchant.objects.get_or_create(
-                    slug=m_slug,
-                    defaults={
-                        'name': m_info.get('name', 'Merchant Partner'),
-                        'logo_url': m_info.get('logo_url', ''),
-                        'is_active': True,
-                    }
-                )
+                m_name = m_info.get('name', 'Merchant Partner')
+                merchant = Merchant.objects.filter(slug=m_slug).first() or Merchant.objects.filter(name=m_name).first()
+                if not merchant:
+                    merchant = Merchant.objects.create(
+                        slug=m_slug,
+                        name=m_name,
+                        logo_url=m_info.get('logo_url', ''),
+                        is_active=True,
+                    )
 
                 c_info = m_prod.get('category') or {}
                 c_name = c_info.get('name') if isinstance(c_info, dict) else (c_info or 'General')
                 from django.utils.text import slugify
                 c_slug = c_info.get('slug') if isinstance(c_info, dict) else slugify(c_name)
-                category, _ = Category.objects.get_or_create(
-                    slug=c_slug,
-                    defaults={'name': c_name}
-                )
+                category = Category.objects.filter(name=c_name).first() or Category.objects.filter(slug=c_slug).first()
+                if not category:
+                    category = Category.objects.create(name=c_name, slug=c_slug)
 
                 price_val = Decimal(str(m_prod.get('price', 0)))
                 orig_price_val = Decimal(str(m_prod.get('original_price', 0))) if m_prod.get('original_price') else None
@@ -162,23 +162,23 @@ class CartItemManageView(APIView):
                 print(f"🛒 [BACKEND] Matched in Merchant Gateway via search '{search_term}': {m_prod['name']}")
                 m_info = m_prod.get('merchant') or {}
                 m_slug = m_info.get('slug') or 'general-merchant'
-                merchant, _ = Merchant.objects.get_or_create(
-                    slug=m_slug,
-                    defaults={
-                        'name': m_info.get('name', 'Merchant Partner'),
-                        'logo_url': m_info.get('logo_url', ''),
-                        'is_active': True,
-                    }
-                )
+                m_name = m_info.get('name', 'Merchant Partner')
+                merchant = Merchant.objects.filter(slug=m_slug).first() or Merchant.objects.filter(name=m_name).first()
+                if not merchant:
+                    merchant = Merchant.objects.create(
+                        slug=m_slug,
+                        name=m_name,
+                        logo_url=m_info.get('logo_url', ''),
+                        is_active=True,
+                    )
 
                 c_info = m_prod.get('category') or {}
                 c_name = c_info.get('name') if isinstance(c_info, dict) else (c_info or 'General')
                 from django.utils.text import slugify
                 c_slug = c_info.get('slug') if isinstance(c_info, dict) else slugify(c_name)
-                category, _ = Category.objects.get_or_create(
-                    slug=c_slug,
-                    defaults={'name': c_name}
-                )
+                category = Category.objects.filter(name=c_name).first() or Category.objects.filter(slug=c_slug).first()
+                if not category:
+                    category = Category.objects.create(name=c_name, slug=c_slug)
 
                 price_val = Decimal(str(m_prod.get('price', 0)))
                 orig_price_val = Decimal(str(m_prod.get('original_price', 0))) if m_prod.get('original_price') else None

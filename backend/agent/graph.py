@@ -480,88 +480,270 @@ def search_recommend_node(state: CommerceState, tracer: Optional[AgentExecutionT
 def comparison_node(state: CommerceState, tracer: Optional[AgentExecutionTracer] = None) -> Dict[str, Any]:
     step = tracer.start_step(
         step_name="Side-by-Side Spec & Sentiment Comparison",
-        description="Generating hardware delta matrix across merchant APIs and cross-referencing reviewer sentiment",
+        description="Extracting comparison targets, researching live merchant & web marketplace specs, and evaluating delta",
         tool_name="compare_products"
     ) if tracer else None
 
-    msg = state.get("message", "").lower()
+    msg = state.get("message", "").strip()
     history = state.get("history", [])
-    all_prods = merchant_gateway.search_all_merchants()
+
+    # 1. Clean query & Extract Comparison Targets
+    clean_q = re.sub(r'^(?:please\s+)?(?:compare|show\s+comparison\s+between|tell\s+me\s+difference\s+between|difference\s+between|vs)\s+', '', msg, flags=re.IGNORECASE).strip()
+    clean_q = re.sub(r'\s+(?:which\s+is\s+better|which\s+one\s+is\s+better|ehich\s+is\s+better|which\s+is\s+best|which\s+one\s+to\s+buy|what\s+should\s+i\s+buy|\bwhich\b.*|\behich\b.*)\??$', '', clean_q, flags=re.IGNORECASE).strip()
+
+    # Split targets by 'and', 'vs', 'versus', 'to', 'with'
+    parts = re.split(r'\s+(?:vs\.?|versus|and|compared\s+to|with)\s+', clean_q, flags=re.IGNORECASE)
+    parts = [p.strip() for p in parts if len(p.strip()) > 2]
+
+    # Normalize brand/model spelling
+    def normalize_brand(text: str) -> str:
+        t = re.sub(r'motorolla', 'motorola', text, flags=re.IGNORECASE)
+        t = re.sub(r'samusng', 'samsung', t, flags=re.IGNORECASE)
+        t = re.sub(r'redmee', 'redmi', t, flags=re.IGNORECASE)
+        t = re.sub(r'xiomi|xomi', 'xiaomi', t, flags=re.IGNORECASE)
+        return t.strip()
+
     products = []
 
-    # 1. Dynamic brand & token matching from current user message
-    for prod in all_prods:
-        b_name = prod.get('brand', '').lower()
-        p_name = prod.get('name', '').lower()
-        if (len(b_name) > 2 and b_name in msg) or any(t in msg for t in p_name.split() if len(t) > 3 and t not in {'with', 'than', 'compare', 'show', 'best', 'good'}):
-            if prod not in products:
-                products.append(prod)
+    # 2. Search for each specific comparison target across merchant APIs & live web scrapers
+    known_brands = {'oppo', 'motorola', 'motorolla', 'samsung', 'apple', 'iphone', 'xiaomi', 'redmi', 'oneplus', 'realme', 'iqoo', 'vivo', 'pixel', 'google', 'lava', 'sony', 'boat', 'noise', 'fire-boltt', 'boult', 'zebronics', 'jbl', 'bose', 'campus', 'asian', 'puma', 'nike', 'adidas', 'snitch', 'bombay'}
 
-    # 2. Multi-turn History: If user says "compare them" or provides <2 products, extract from recent turns
+    if len(parts) >= 2:
+        for part in parts[:3]:
+            norm_part = normalize_brand(part)
+            part_tokens = [t for t in re.findall(r'[a-zA-Z0-9]+', norm_part.lower()) if len(t) > 1]
+            query_brands = [t for t in part_tokens if t in known_brands]
+            non_generic = [t for t in part_tokens if t not in {'pro', 'plus', 'max', 'mini', 'lite', 'ultra', 'phone', '5g', '4g', 'edition', 'series', 'and', 'the'}]
+
+            matched = merchant_gateway.search_all_merchants(query=norm_part)
+            if matched:
+                if query_brands:
+                    matched = [m for m in matched if any(b in m['brand'].lower() or b in m['name'].lower() for b in query_brands)]
+                elif non_generic:
+                    matched = [m for m in matched if any(t in m['brand'].lower() or t in m['name'].lower() for t in non_generic)]
+                else:
+                    matched = []
+
+            if not matched:
+                ext_matches = dynamic_marketplace_engine.search_all_external_marketplaces(query=norm_part)
+                if ext_matches:
+                    if query_brands:
+                        ext_filtered = [e for e in ext_matches if any(b in e['brand'].lower() or b in e['name'].lower() for b in query_brands)]
+                        matched = ext_filtered if ext_filtered else ext_matches
+                    elif non_generic:
+                        ext_filtered = [e for e in ext_matches if any(t in e['brand'].lower() or t in e['name'].lower() for t in non_generic)]
+                        matched = ext_filtered if ext_filtered else ext_matches
+                    else:
+                        matched = ext_matches
+
+            if matched:
+                for candidate in matched:
+                    if not any(p['name'] == candidate['name'] for p in products):
+                        products.append(candidate)
+                        break
+
+    # 3. Fallback: If parts didn't yield >= 2 items, search merchant catalog & external scrapers for query keywords
+    if len(products) < 2:
+        all_local = merchant_gateway.search_all_merchants()
+        for prod in all_local:
+            b_name = prod.get('brand', '').lower()
+            p_name = prod.get('name', '').lower()
+            # Strict word boundary check for brand name
+            if len(b_name) > 2 and re.search(rf'\b{re.escape(b_name)}\b', msg.lower()):
+                if not any(p['name'] == prod['name'] for p in products):
+                    products.append(prod)
+            # Strict word boundary check for specific model words (excluding generic words)
+            stop_words = {'with', 'than', 'compare', 'show', 'best', 'good', 'better', 'plus', 'pro', 'lite', 'ultra', 'mini', 'max', 'phone', 'shoes', 'watch'}
+            prod_tokens = [t for t in re.findall(r'[a-zA-Z0-9]+', p_name) if len(t) > 3 and t not in stop_words]
+            if prod_tokens and any(re.search(rf'\b{re.escape(t)}\b', msg.lower()) for t in prod_tokens):
+                if not any(p['name'] == prod['name'] for p in products):
+                    products.append(prod)
+
+    if len(products) < 2:
+        ext_all = dynamic_marketplace_engine.search_all_external_marketplaces(query=normalize_brand(clean_q))
+        for prod in ext_all:
+            if not any(p['name'] == prod['name'] for p in products):
+                products.append(prod)
+            if len(products) >= 2:
+                break
+
     if len(products) < 2 and history:
         for turn in reversed(history[-6:]):
             turn_text = turn.get("content", "").lower()
-            for prod in all_prods:
-                b_name = prod.get('brand', '').lower()
-                p_name = prod.get('name', '').lower()
-                if (len(b_name) > 2 and b_name in turn_text) or any(t in turn_text for t in p_name.split() if len(t) > 3 and t not in {'with', 'than', 'compare', 'show', 'best', 'good'}):
-                    if prod not in products:
-                        products.append(prod)
+            ext_hist = dynamic_marketplace_engine.search_all_external_marketplaces(query=turn_text)
+            for prod in ext_hist:
+                if not any(p['name'] == prod['name'] for p in products):
+                    products.append(prod)
+                if len(products) >= 2:
+                    break
             if len(products) >= 2:
                 break
 
     if len(products) < 2:
-        products = all_prods[:2]
-
-    if len(products) < 2:
         if step:
-            step.fail("Insufficient products for comparison")
+            step.fail("Could not find sufficient matching products for comparison")
         return {
-            "response_message": "Please select at least two products from the merchant catalog to compare.",
+            "response_message": f"I couldn't locate specific products for '{msg}'. Please provide full model names (e.g. 'Compare iPhone 16 vs Samsung S24' or 'Sony WH-1000XM5 vs boAt Rockerz 550').",
             "products": [],
             "comparison": None,
             "suggested_actions": []
         }
 
-    # Build dynamic N x M matrix
-    columns = ["Feature"] + [p['name'] for p in products]
-    row_price = ["Price"] + [f"₹{int(float(p['price'])):,}" for p in products]
-    row_rating = ["Rating"] + [f"{p['rating']} ★ ({p['review_count']})" for p in products]
-    row_brand = ["Brand"] + [p['brand'] for p in products]
-    row_feature = ["Key Spec"] + [str(p.get('attributes', {}).get('battery_life') or p.get('attributes', {}).get('ram') or p.get('attributes', {}).get('material') or 'Verified Spec') for p in products]
-    row_source = ["Platform Status"] + ["Direct Merchant (1-Tap Pay)" if p.get('is_platform_product', True) else "External Scraped" for p in products]
-    row_verdict = ["Reviewer Verdict"] + ["94% Positive (YouTube & Reddit)" if i == 0 else "89% Positive (Community Consensus)" for i, _ in enumerate(products)]
+    def clean_product_title(title: str) -> str:
+        t = re.sub(r'^(?:Sponsored(?:\s+Ad)?\s*[-–:]\s*)+', '', title, flags=re.IGNORECASE).strip()
+        t = re.split(r'\s*\|\s*', t)[0].strip()
+        t = re.sub(r'\s*\([^)]*(?:\)|$)', '', t).strip()
+        t = re.split(r'\s*,\s*(?:\d+GB|Glacier|Pantone|Starry|Satin|Midnight|Titanium|Black|White|Blue)', t)[0].strip()
+        t = re.sub(r'\s+[a-zA-Z]$', '', t).strip()
+        return t if len(t) > 3 else title[:30]
 
-    rows = [row_price, row_rating, row_brand, row_feature, row_source, row_verdict]
+    # 4. Perform Live Multi-Product Google/Tavily Web Search for Full Technical Specs
+    cleaned_names = [clean_product_title(p['name']) for p in products]
+    p1 = products[0]
+    p2 = products[1]
+    p1_name = cleaned_names[0]
+    p2_name = cleaned_names[1]
 
-    comp_data = {
-        "title": " vs ".join([p['name'] for p in products]),
-        "columns": columns,
-        "rows": rows,
-        "recommendation": f"Top pick: **{products[0]['name']}** for superior rating and verified multi-source community sentiment."
-    }
+    spec_step = tracer.start_step(
+        step_name="Live Multi-Product Web Spec Research",
+        description=f"Fetching live technical specifications and reviewer consensus for {p1_name} and {p2_name}",
+        tool_name="web_spec_search"
+    ) if tracer else None
 
-    md_header = "| " + " | ".join(columns) + " |"
-    md_separator = "| " + " | ".join(["---"] * len(columns)) + " |"
-    md_rows = "\n".join(["| " + " | ".join(row) + " |" for row in rows])
-    md_table = f"{md_header}\n{md_separator}\n{md_rows}"
+    web_specs_p1 = research_engine.fetch_live_web_specifications(p1_name)
+    web_specs_p2 = research_engine.fetch_live_web_specifications(p2_name)
 
-    response_text = (
-        f"### ⚖️ Side-by-Side Product Comparison Matrix (N×M)\n\n"
-        f"{md_table}\n\n"
-        f"💡 **AI Synthesis**: {comp_data['recommendation']}"
+    if spec_step:
+        spec_step.complete({
+            "p1_snippets": len(web_specs_p1.get("raw_snippets", [])),
+            "p2_snippets": len(web_specs_p2.get("raw_snippets", []))
+        })
+
+    comp_prompt = (
+        f"You are Mitrai Shopping AI, an expert e-commerce product comparison and recommendation engine.\n\n"
+        f"USER QUERY: '{msg}'\n\n"
+        f"PRODUCTS TO COMPARE ({len(products)} items):\n"
+        f"{json.dumps([{'name': p['name'], 'brand': p['brand'], 'price': p['price'], 'rating': p.get('rating', 4.5), 'description': p.get('description', ''), 'attributes': p.get('attributes', {})} for p in products], indent=2)}\n\n"
+        f"LIVE WEB SPECIFICATION RESEARCH FOR {p1_name}:\n"
+        f"{json.dumps(web_specs_p1.get('raw_snippets', []))}\n\n"
+        f"LIVE WEB SPECIFICATION RESEARCH FOR {p2_name}:\n"
+        f"{json.dumps(web_specs_p2.get('raw_snippets', []))}\n\n"
+        f"INSTRUCTIONS:\n"
+        f"1. Synthesize the verified live web search data and product attributes.\n"
+        f"2. Dynamically select 6 to 10 most relevant, critical comparison dimensions tailored specifically to this product domain (e.g. for smartphones: Processor & RAM, Display & Refresh Rate, Camera Setup, Battery & Fast Charging, Build & IP Rating, Software; for audio: Sound Drivers, ANC, Battery Playtime, Codecs; for shoes: Cushioning, Sole Grip, Material, Arch Support; for coffee: Roast, Tasting Notes, Origin; for clothing: Fabric, Fit, Care).\n"
+        f"3. Return a JSON object with this EXACT structure:\n"
+        f"```json\n"
+        f"{{\n"
+        f"  \"title\": \"{p1_name} vs {p2_name}\",\n"
+        f"  \"columns\": [\"Specification\", \"{p1_name}\", \"{p2_name}\"],\n"
+        f"  \"rows\": [\n"
+        f"    [\"Price\", \"₹...\", \"₹...\"],\n"
+        f"    [\"Rating & Reviews\", \"... ★ (...)\", \"... ★ (...)\"],\n"
+        f"    [\"<Dynamic Dimension 1>\", \"<Spec for {p1_name}>\", \"<Spec for {p2_name}>\"],\n"
+        f"    [\"<Dynamic Dimension 2>\", \"<Spec for {p1_name}>\", \"<Spec for {p2_name}>\"],\n"
+        f"    [\"<Dynamic Dimension 3>\", \"<Spec for {p1_name}>\", \"<Spec for {p2_name}>\"],\n"
+        f"    [\"<Dynamic Dimension 4>\", \"<Spec for {p1_name}>\", \"<Spec for {p2_name}>\"],\n"
+        f"    [\"<Dynamic Dimension 5>\", \"<Spec for {p1_name}>\", \"<Spec for {p2_name}>\"],\n"
+        f"    [\"<Dynamic Dimension 6>\", \"<Spec for {p1_name}>\", \"<Spec for {p2_name}>\"],\n"
+        f"    [\"Reviewer Consensus\", \"...\", \"...\"],\n"
+        f"    [\"Best Suited For\", \"...\", \"...\"]\n"
+        f"  ],\n"
+        f"  \"verdict\": \"Direct, decisive answer to the user's question explaining which product is better and why.\",\n"
+        f"  \"strengths_product_1\": [\"Key advantage 1\", \"Key advantage 2\"],\n"
+        f"  \"strengths_product_2\": [\"Key advantage 1\", \"Key advantage 2\"],\n"
+        f"  \"buying_recommendation\": \"Clear advice on who should choose {p1_name} vs {p2_name}.\"\n"
+        f"}}\n"
+        f"```\n\n"
+        f"Return ONLY valid JSON."
     )
 
+    llm_comp_text = gemini_service.generate_response(prompt=comp_prompt, history=history)
+    parsed_comp = None
+    if llm_comp_text:
+        try:
+            match = re.search(r'\{.*\}', llm_comp_text, re.DOTALL)
+            if match:
+                parsed_comp = json.loads(match.group(0))
+        except Exception:
+            parsed_comp = None
+
+    if parsed_comp and isinstance(parsed_comp, dict) and "rows" in parsed_comp:
+        columns = parsed_comp.get("columns", ["Specification", p1_name, p2_name])
+        rows = parsed_comp.get("rows", [])
+        title = parsed_comp.get("title", f"{p1_name} vs {p2_name}")
+        verdict = parsed_comp.get("verdict", "")
+        p1_strengths = parsed_comp.get("strengths_product_1", [])
+        p2_strengths = parsed_comp.get("strengths_product_2", [])
+        buying_rec = parsed_comp.get("buying_recommendation", "")
+
+        rec_statement = buying_rec or verdict or f"Top pick: **{p2_name}**"
+
+        p1_bullets = "\n".join([f"  • {s}" for s in p1_strengths]) if p1_strengths else f"  • Strong overall value in its class"
+        p2_bullets = "\n".join([f"  • {s}" for s in p2_strengths]) if p2_strengths else f"  • High hardware performance"
+
+        response_text = (
+            f"### ⚖️ Side-by-Side Product Comparison: {p1_name} vs {p2_name}\n\n"
+            f"**🏆 Executive Verdict: Which is Better?**\n"
+            f"{verdict}\n\n"
+            f"**🌟 Key Strengths of {p1_name}**:\n"
+            f"{p1_bullets}\n\n"
+            f"**⚡ Key Strengths of {p2_name}**:\n"
+            f"{p2_bullets}\n\n"
+            f"**🎯 Buying Recommendation**:\n"
+            f"{buying_rec}\n\n"
+            f"👇 *Explore the complete **Multi-Dimension Specification Delta Matrix** in the interactive card below.*"
+        )
+
+        comp_data = {
+            "title": title,
+            "columns": columns,
+            "rows": rows,
+            "recommendation": rec_statement
+        }
+    else:
+        # Dynamic fallback if LLM is unavailable
+        columns = ["Specification", p1_name, p2_name]
+        rows = [
+            ["💰 Price", f"₹{int(float(p1.get('price', 0))):,}", f"₹{int(float(p2.get('price', 0))):,}"],
+            ["⭐ Rating & Reviews", f"{p1.get('rating', 4.5)} ★", f"{p2.get('rating', 4.5)} ★"],
+            ["🏷️ Brand", p1.get('brand', 'Verified Brand'), p2.get('brand', 'Verified Brand')],
+            ["📋 Highlights", str(p1.get('description', '')[:50]), str(p2.get('description', '')[:50])],
+            ["🛒 Platform Availability", "Direct Merchant (1-Tap Pay)" if p1.get('is_platform_product', True) else "Live Web Marketplace", "Direct Merchant (1-Tap Pay)" if p2.get('is_platform_product', True) else "Live Web Marketplace"],
+            ["🎯 Best Suited For", f"Buyers looking for {p1.get('brand', 'verified')} products", f"Buyers looking for {p2.get('brand', 'verified')} products"]
+        ]
+        rec_statement = f"Comparison between **{p1_name}** and **{p2_name}**."
+        response_text = (
+            f"### ⚖️ Side-by-Side Product Comparison: {p1_name} vs {p2_name}\n\n"
+            f"Here is a side-by-side breakdown of the verified details for both items:\n\n"
+            f"• **{p1_name}** is priced at **₹{int(float(p1.get('price', 0))):,}** with a **{p1.get('rating', 4.5)}★** community rating.\n"
+            f"• **{p2_name}** is priced at **₹{int(float(p2.get('price', 0))):,}** with a **{p2.get('rating', 4.5)}★** community rating.\n\n"
+            f"👇 *Check the complete specification matrix in the table card below.*"
+        )
+        comp_data = {
+            "title": f"{p1_name} vs {p2_name}",
+            "columns": columns,
+            "rows": rows,
+            "recommendation": rec_statement
+        }
+
     if step:
-        step.complete({"compared_products": [p['name'] for p in products], "matrix_dimensions": f"{len(rows)}x{len(columns)}"})
+        step.complete({"compared_products": [p['name'] for p in products], "spec_count": len(rows), "matrix_dimensions": f"{len(rows)}x{len(columns)}"})
 
     suggested = []
     for p in products[:2]:
-        suggested.append({
-            "label": f"Add {p['brand']} to Bag (₹{int(float(p['price'])):,})",
-            "action": "ADD_TO_CART",
-            "payload": {"product_id": p['id'], "quantity": 1}
-        })
+        p_id = p.get('id')
+        if p.get('is_platform_product', True) and p_id is not None:
+            suggested.append({
+                "label": f"Add {p['brand']} to Bag (₹{int(float(p['price'])):,})",
+                "action": "ADD_TO_CART",
+                "payload": {"product_id": p_id, "quantity": 1}
+            })
+        else:
+            suggested.append({
+                "label": f"🔍 View {p['brand']} Deals",
+                "action": "FILTER_MERCHANT",
+                "payload": {"query": f"tell me more about {p['name']}"}
+            })
 
     return {
         "response_message": response_text,

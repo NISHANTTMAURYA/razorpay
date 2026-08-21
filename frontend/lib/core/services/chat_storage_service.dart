@@ -58,25 +58,50 @@ class ChatStorageService {
     return 'mitrai_active_chat_session_id_v3_$uid';
   }
 
-  /// Loads all saved chat sessions sorted by most recent
+  /// Loads all saved chat sessions across device storage sorted by most recent
   Future<List<ChatSession>> getSessions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      String? raw = prefs.getString(_sessionsKey);
+      final Map<String, ChatSession> sessionMap = {};
 
-      // Fallback & auto-migration from legacy global keys
-      if ((raw == null || raw.isEmpty) && prefs.containsKey(_legacySessionsKey)) {
-        raw = prefs.getString(_legacySessionsKey);
-        if (raw != null && raw.isNotEmpty) {
-          await prefs.setString(_sessionsKey, raw);
+      // Scan all potential session keys in SharedPreferences
+      final allKeys = prefs.getKeys().where((k) =>
+          k.startsWith('mitrai_chat_sessions') ||
+          k.contains('chat_sessions') ||
+          k == _legacySessionsKey ||
+          k == _sessionsKey);
+
+      for (final key in allKeys) {
+        final raw = prefs.getString(key);
+        if (raw != null && raw.trim().isNotEmpty) {
+          try {
+            final decoded = jsonDecode(raw);
+            if (decoded is List) {
+              for (final item in decoded) {
+                if (item is Map) {
+                  final s = ChatSession.fromJson(Map<String, dynamic>.from(item));
+                  if (s.messages.isNotEmpty || (s.title.isNotEmpty && s.title != 'New Conversation')) {
+                    if (!sessionMap.containsKey(s.id) || s.updatedAt.isAfter(sessionMap[s.id]!.updatedAt)) {
+                      sessionMap[s.id] = s;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (_) {}
         }
       }
 
-      if (raw == null || raw.isEmpty) return [];
-
-      final List decoded = jsonDecode(raw);
-      final list = decoded.map((e) => ChatSession.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+      final list = sessionMap.values.toList();
       list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+      // Persist aggregated sessions into current active user key & legacy key
+      if (list.isNotEmpty) {
+        final encoded = jsonEncode(list.map((s) => s.toJson()).toList());
+        await prefs.setString(_sessionsKey, encoded);
+        await prefs.setString(_legacySessionsKey, encoded);
+      }
+
       return list;
     } catch (e) {
       return [];
@@ -98,9 +123,9 @@ class ChatStorageService {
 
       final encoded = jsonEncode(sessions.map((s) => s.toJson()).toList());
       await prefs.setString(_sessionsKey, encoded);
-      await prefs.setString(_activeSessionKey, session.id);
-      // Also backup to legacy key for cross-session access
       await prefs.setString(_legacySessionsKey, encoded);
+      await prefs.setString(_activeSessionKey, session.id);
+      await prefs.setString(_legacyActiveSessionKey, session.id);
     } catch (_) {}
   }
 
@@ -112,13 +137,22 @@ class ChatStorageService {
       sessions.removeWhere((s) => s.id == sessionId);
 
       final encoded = jsonEncode(sessions.map((s) => s.toJson()).toList());
-      await prefs.setString(_sessionsKey, encoded);
-      await prefs.setString(_legacySessionsKey, encoded);
+      
+      final allKeys = prefs.getKeys().where((k) =>
+          k.startsWith('mitrai_chat_sessions') ||
+          k.contains('chat_sessions') ||
+          k == _legacySessionsKey ||
+          k == _sessionsKey);
+
+      for (final key in allKeys) {
+        await prefs.setString(key, encoded);
+      }
 
       final activeId = prefs.getString(_activeSessionKey) ?? prefs.getString(_legacyActiveSessionKey);
       if (activeId == sessionId) {
         if (sessions.isNotEmpty) {
           await prefs.setString(_activeSessionKey, sessions.first.id);
+          await prefs.setString(_legacyActiveSessionKey, sessions.first.id);
         } else {
           await prefs.remove(_activeSessionKey);
           await prefs.remove(_legacyActiveSessionKey);

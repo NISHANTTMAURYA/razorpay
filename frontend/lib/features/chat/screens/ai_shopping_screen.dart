@@ -59,7 +59,20 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
       sessionToLoad = sessions.first;
     }
 
-    if (sessionToLoad != null) {
+    if (sessionToLoad != null && sessionToLoad.messages.isNotEmpty) {
+      setState(() {
+        _currentSession = sessionToLoad;
+        _messages.clear();
+        _messages.addAll(sessionToLoad!.messages);
+      });
+    } else if (sessions.isNotEmpty && sessions.any((s) => s.messages.isNotEmpty)) {
+      final nonEmpty = sessions.firstWhere((s) => s.messages.isNotEmpty);
+      setState(() {
+        _currentSession = nonEmpty;
+        _messages.clear();
+        _messages.addAll(nonEmpty.messages);
+      });
+    } else if (sessionToLoad != null) {
       setState(() {
         _currentSession = sessionToLoad;
         _messages.clear();
@@ -910,6 +923,8 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
   Widget _buildComparisonMatrixTable(Map<String, dynamic> comp) {
     final columns = (comp['columns'] as List?)?.map((e) => e.toString()).toList() ?? [];
     final rows = (comp['rows'] as List?)?.map((r) => (r as List).map((c) => c.toString()).toList()).toList() ?? [];
+    final title = comp['title']?.toString() ?? 'Intelligent Comparison Matrix';
+    final recommendation = comp['recommendation']?.toString();
 
     if (columns.isEmpty || rows.isEmpty) return const SizedBox.shrink();
 
@@ -921,42 +936,128 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: const [
-              Text(
-                'Intelligent Comparison Matrix (N×M)',
-                style: TextStyle(color: BrikTheme.brandNavy, fontSize: 13, fontWeight: FontWeight.w700),
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '⚖️ 11-Point Specification Delta Matrix',
+                      style: TextStyle(color: BrikTheme.brandNavy, fontSize: 13, fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      title,
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
-              PillBadge(
-                text: 'MULTI-SPEC',
-                fontSize: 9,
+              const PillBadge(
+                text: 'MULTI-SPEC N×M',
+                fontSize: 8.5,
                 backgroundColor: BrikTheme.brandNavy,
                 textColor: Colors.white,
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: DataTable(
               border: TableBorder.all(
                 color: BrikTheme.cardBorder,
                 width: 1,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
               ),
               headingRowColor: WidgetStateProperty.all(BrikTheme.cardSurfaceSecondary),
-              dataRowColor: WidgetStateProperty.all(BrikTheme.cardSurface),
-              columnSpacing: 16,
-              horizontalMargin: 12,
-              headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 11.5),
-              dataTextStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
-              columns: columns.map((col) => DataColumn(label: Text(col))).toList(),
+              dataRowColor: WidgetStateProperty.resolveWith<Color>((states) {
+                return BrikTheme.cardSurface;
+              }),
+              columnSpacing: 18,
+              horizontalMargin: 14,
+              dataRowMinHeight: 44,
+              dataRowMaxHeight: 76,
+              headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
+              columns: columns.asMap().entries.map((entry) {
+                final idx = entry.key;
+                final col = entry.value;
+                return DataColumn(
+                  label: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: idx == 0 ? 150 : 210),
+                    child: Text(
+                      col,
+                      style: TextStyle(
+                        color: idx == 0 ? const Color(0xFF64B5F6) : Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 12,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                    ),
+                  ),
+                );
+              }).toList(),
               rows: rows.map((row) {
                 return DataRow(
-                  cells: row.map((cell) => DataCell(Text(cell))).toList(),
+                  cells: row.asMap().entries.map((entry) {
+                    final idx = entry.key;
+                    final cell = entry.value;
+                    final isSpecLabel = idx == 0;
+                    return DataCell(
+                      ConstrainedBox(
+                        constraints: BoxConstraints(maxWidth: isSpecLabel ? 150 : 220),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          child: Text(
+                            cell,
+                            style: TextStyle(
+                              color: isSpecLabel ? const Color(0xFFFFD54F) : Colors.white,
+                              fontWeight: isSpecLabel ? FontWeight.w700 : FontWeight.w500,
+                              fontSize: isSpecLabel ? 11.5 : 11,
+                              height: 1.25,
+                            ),
+                            softWrap: true,
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 );
               }).toList(),
             ),
           ),
+          if (recommendation != null && recommendation.trim().isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1B2A38),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0x66FFB74D)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.lightbulb_rounded, color: Color(0xFFFFB74D), size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      recommendation,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

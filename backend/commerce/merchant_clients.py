@@ -108,14 +108,21 @@ class BaseMerchantClient(ABC):
         catalog = self.fetch_catalog()
         results = []
         q_lower = query.lower().strip()
-        tokens = [t for t in re.findall(r'\b\w+\b', q_lower) if len(t) > 2 and t not in {'the', 'and', 'for', 'with', 'under', 'below', 'best', 'good', 'find', 'show', 'can', 'you', 'give', 'need', 'want'}]
+        category_stopwords = {
+            'the', 'and', 'for', 'with', 'under', 'below', 'above', 'best', 'good', 'find', 'show', 'can', 'you', 'give', 'need', 'want',
+            'phone', 'phones', 'phonea', 'fone', 'fones', 'mobile', 'mobiles', 'smartphone', 'smartphones',
+            'audio', 'headphone', 'headphones', 'earphone', 'earphones', 'earbud', 'earbuds', 'speaker',
+            'watch', 'watches', 'smartwatch', 'wearable', 'shoe', 'shoes', 'sneaker', 'sneakers', 'footwear',
+            'shirt', 'shirts', 'tshirt', 't-shirt', 'clothing', 'apparel', 'skincare', 'haircare', 'coffee'
+        }
+        tokens = [t for t in re.findall(r'\b\w+\b', q_lower) if len(t) > 2 and t not in category_stopwords and not re.match(r'^\d+k?$', t)]
 
-        # Detect category from query — fuzzy-tolerant (handles typos like "phonea")
+        # Detect category from query — fuzzy-tolerant
         detected_category = category
         if not detected_category:
             if re.search(r'\b(?:headphone|headphones|earphone|earphones|earbud|earbuds|audio|tws|airpod|airpods|sound|speaker|soundbar|neckband)\b', q_lower):
                 detected_category = "Audio"
-            elif re.search(r'(?:phone|phon|fone|smartphone|mobile|mobil|5g|android|iphone)', q_lower) and not re.search(r'headphone|earphone', q_lower):
+            elif re.search(r'(?:phone|phones|phonea|phon|fone|smartphone|mobile|mobil|5g|android|iphone|reno|galaxy|redmi|oneplus|realme|iqoo|motorola|oppo|vivo|pixel|lava)', q_lower) and not re.search(r'headphone|earphone', q_lower):
                 detected_category = "Smartphones"
             elif re.search(r'(?:shoe|sneaker|running shoe|footwear|boot|loafer|sandal)', q_lower):
                 detected_category = "Footwear"
@@ -140,11 +147,11 @@ class BaseMerchantClient(ABC):
             if min_price is not None and item.price < min_price:
                 continue
 
-            # 3. Token match score
+            # 3. Token match score with whole-word regex matching
             if tokens:
                 item_text = f"{item.name} {item.brand} {item.category} {item.description}".lower()
-                matches_any_token = any(token in item_text for token in tokens)
-                if not matches_any_token and not detected_category:
+                matches_any_token = any(re.search(rf'\b{re.escape(token)}\b', item_text) for token in tokens)
+                if not matches_any_token:
                     continue
 
             results.append(item)

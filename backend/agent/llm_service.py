@@ -39,9 +39,9 @@ class GeminiAgentService:
             genai.configure(api_key=self.api_key)
 
             candidate_models = [
-                "gemini-3.6-flash",
-                "gemini-2.5-flash",
-                "gemini-3.1-pro-preview",
+                "gemini-3.5-flash-lite",
+                "gemini-3.5-flash",
+                "gemini-3.7-flash",
                 "gemini-flash-latest",
                 "gemini-pro-latest",
             ]
@@ -95,7 +95,7 @@ class GeminiAgentService:
                     full_prompt,
                     generation_config={
                         "temperature": 0.7,
-                        "max_output_tokens": 700,
+                        "max_output_tokens": 2048,
                     }
                 )
                 if response and response.text:
