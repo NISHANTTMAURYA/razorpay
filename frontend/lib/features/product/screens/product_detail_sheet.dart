@@ -5,6 +5,7 @@ import '../../../core/services/api_service.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
 import '../../../shared/widgets/pill_badge.dart';
+import '../../../core/utils/image_utils.dart';
 
 class ProductDetailSheet extends StatefulWidget {
   final Map<String, dynamic> product;
@@ -29,14 +30,14 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
   List<String> get _images {
     final rawImgs = widget.product['images'];
     if (rawImgs is List && rawImgs.isNotEmpty) {
-      return rawImgs.map((e) => e.toString()).toList();
+      return rawImgs.map((e) => getHighResImageUrl(e.toString())).toList();
     }
     final singleImg = widget.product['image'] ?? widget.product['image_url'];
     if (singleImg != null && singleImg.toString().isNotEmpty) {
-      return [singleImg.toString()];
+      return [getHighResImageUrl(singleImg.toString())];
     }
     return [
-      'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600',
+      getHighResImageUrl('https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=1200'),
     ];
   }
 

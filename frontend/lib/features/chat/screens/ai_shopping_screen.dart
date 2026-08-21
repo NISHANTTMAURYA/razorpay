@@ -9,6 +9,7 @@ import '../../../core/providers/cart_provider.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/app_logo.dart';
 import '../../../shared/widgets/pill_badge.dart';
+import '../../../core/utils/image_utils.dart';
 import '../../product/screens/product_detail_sheet.dart';
 
 class AiShoppingScreen extends StatefulWidget {
@@ -248,12 +249,14 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
       'actions': List<Map<String, dynamic>>.from(response['suggested_actions'] ?? []),
     });
 
+    final firstNewIndex = _messages.length;
+
     if (mounted) {
       setState(() {
         _isLoading = false;
         _messages.addAll(newBotMessages);
       });
-      _scrollToBottom();
+      _scrollToMessage(firstNewIndex);
       await _saveCurrentSession();
     } else {
       // User navigated away: persist message directly to disk storage
@@ -265,11 +268,34 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     }
   }
 
+  final Map<int, GlobalKey> _messageKeys = {};
+
+  GlobalKey _getKeyForIndex(int index) {
+    return _messageKeys.putIfAbsent(index, () => GlobalKey());
+  }
+
+  void _scrollToMessage(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final key = _messageKeys[index];
+      final ctx = key?.currentContext;
+      if (ctx != null) {
+        Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.02, // Aligns the top of the newly arrived response right below the top bar
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeOutCubic,
+        );
+      } else if (_scrollController.hasClients) {
+        _scrollToBottom();
+      }
+    });
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent + 300,
+          _scrollController.position.maxScrollExtent + 200,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
@@ -634,7 +660,10 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
                     if (index == _messages.length) {
                       return _buildAgentReasoningBubble();
                     }
-                    return _buildMessageBubble(_messages[index]);
+                    return KeyedSubtree(
+                      key: _getKeyForIndex(index),
+                      child: _buildMessageBubble(_messages[index]),
+                    );
                   },
                 ),
         ),
@@ -1073,11 +1102,12 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
 
     final externalUrl = prod['attributes']?['external_url']?.toString() ?? prod['external_url']?.toString() ?? '';
 
-    // One single picture only
+    // One single picture only (HD upgraded)
     final images = prod['images'] as List?;
-    final singleImage = (images != null && images.isNotEmpty)
+    final rawSingleImage = (images != null && images.isNotEmpty)
         ? images.first.toString()
-        : (prod['image'] ?? prod['image_url'] ?? 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=300').toString();
+        : (prod['image'] ?? prod['image_url'] ?? '').toString();
+    final singleImage = getHighResImageUrl(rawSingleImage);
 
     return GestureDetector(
       onTap: () => _openProductDetail(prod),

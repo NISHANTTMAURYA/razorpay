@@ -8,6 +8,7 @@ import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
 import '../../../shared/widgets/pill_badge.dart';
 import '../../../shared/widgets/brik_header_card.dart';
+import '../../../core/utils/image_utils.dart';
 import '../../product/screens/product_detail_sheet.dart';
 
 enum ProductSortOption {
@@ -1301,6 +1302,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     } else if (product['image'] != null) {
       imgUrl = product['image'].toString();
     }
+    imgUrl = getHighResImageUrl(imgUrl);
 
     final attrs = product['attributes'] as Map<String, dynamic>?;
     final keySpec = attrs != null && attrs.isNotEmpty
@@ -1502,6 +1504,7 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
     } else if (product['image'] != null) {
       imgUrl = product['image'].toString();
     }
+    imgUrl = getHighResImageUrl(imgUrl);
 
     final attrs = product['attributes'] as Map<String, dynamic>?;
     final specSummary = attrs != null && attrs.isNotEmpty

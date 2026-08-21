@@ -24,6 +24,30 @@ HEADERS = {
 }
 
 
+def upgrade_image_to_high_res(url: str) -> str:
+    """Transforms low-resolution CDN thumbnail URLs into full HD studio-grade product photos."""
+    if not url:
+        return url
+
+    # 1. Amazon CDN Upgrade: Transforms low-res thumbnail crop (e.g. ._AC_UL320_.) to full 1500px HD resolution (._AC_SL1500_.)
+    if any(k in url for k in ["media-amazon.com", "images-amazon.com", "ssl-images-amazon.com"]):
+        clean_url = re.sub(r'\._[A-Za-z0-9_,-]+_\.', '._AC_SL1500_.', url)
+        return clean_url
+
+    # 2. Flipkart CDN Upgrade: Transforms /image/128/128/ or /image/312/312/ to /image/832/832/
+    if any(k in url for k in ["rukminim", "flipkart.com"]):
+        return re.sub(r'/image/\d+/\d+/', '/image/832/832/', url)
+
+    # 3. Unsplash Upgrade: Ensure w=1200, q=85, auto=format, fit=crop
+    if "unsplash.com" in url:
+        if "?" in url:
+            base = url.split("?")[0]
+            return f"{base}?w=1200&q=85&auto=format&fit=crop"
+        return f"{url}?w=1200&q=85&auto=format&fit=crop"
+
+    return url
+
+
 class DynamicMarketplaceEngine:
     """
     Universal Dynamic Marketplace & Quick-Commerce Search Engine.
@@ -77,7 +101,8 @@ class DynamicMarketplaceEngine:
                         if min_price and price < min_price * 0.85:
                             continue
 
-                        img_url = img_el.get('src') if img_el else 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600'
+                        raw_img_src = img_el.get('src') if img_el else ''
+                        img_url = upgrade_image_to_high_res(raw_img_src) if raw_img_src else 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=1200&q=85&auto=format&fit=crop'
                         rating_text = rating_el.get_text().strip() if rating_el else '4.3'
                         rating_match = re.search(r'([\d\.]+)', rating_text)
                         rating = float(rating_match.group(1)) if rating_match else 4.3
@@ -112,7 +137,7 @@ class DynamicMarketplaceEngine:
                                 "id": "mch_amazon_in",
                                 "name": "Amazon India",
                                 "slug": "amazon-india",
-                                "logo_url": "https://images.unsplash.com/photo-1523474253243-7851a31c3f4d?w=120",
+                                "logo_url": "https://images.unsplash.com/photo-1523474253243-7851a31c3f4d?w=240&q=85",
                                 "rating": 4.6,
                                 "is_active": True
                             }
@@ -210,13 +235,13 @@ Output STRICTLY a JSON array of objects matching this schema (zero markdown outs
 
                     cat_lower = (category or "").lower()
                     if "phone" in cat_lower or "smart" in cat_lower or "oppo" in cat_lower or "motorola" in cat_lower:
-                        img = "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600"
+                        img = "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=1200&q=85&auto=format&fit=crop"
                     elif "audio" in cat_lower or "headphone" in cat_lower:
-                        img = "https://images.unsplash.com/photo-1546435770-a3e426bf472b?w=600"
+                        img = "https://images.unsplash.com/photo-1546435770-a3e426bf472b?w=1200&q=85&auto=format&fit=crop"
                     elif "shoe" in cat_lower or "footwear" in cat_lower:
-                        img = "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600"
+                        img = "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=1200&q=85&auto=format&fit=crop"
                     else:
-                        img = "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600"
+                        img = "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=1200&q=85&auto=format&fit=crop"
 
                     results.append({
                         "id": f"ext_{m_slug}_{idx + 1}",

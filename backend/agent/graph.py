@@ -28,44 +28,95 @@ class CommerceState(TypedDict):
     steps: List[Dict[str, Any]]
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. INTENT ROUTER NODE
+# 1. INTENT ROUTER & CONTEXT DISAMBIGUATION NODE
 # ─────────────────────────────────────────────────────────────────────────────
+
+def extract_context_products_from_history(history: List[Dict[str, Any]], current_msg: str = "") -> List[str]:
+    """Extracts product names and entities currently in conversation context."""
+    if not history:
+        return []
+
+    products = []
+    # 1. Regex check for comparison header in recent assistant turns
+    for turn in reversed(history[-6:]):
+        content = turn.get("content", "")
+        comp_match = re.search(r'###\s*⚖️\s*Side-by-Side Product Comparison:\s*([^\n\:\#]+?)\s+vs\s+([^\n\:\#]+)', content)
+        if comp_match:
+            p1 = comp_match.group(1).strip()
+            p2 = comp_match.group(2).strip()
+            if p1 and p1 not in products:
+                products.append(p1)
+            if p2 and p2 not in products:
+                products.append(p2)
+            if len(products) >= 2:
+                return products
+
+    # 2. Check for LLM extraction from recent history
+    try:
+        hist_sample = [f"{t.get('role')}: {t.get('content')[:200]}" for t in history[-4:]]
+        prompt = (
+            f"Given this recent shopping conversation history:\n"
+            f"{json.dumps(hist_sample)}\n"
+            f"Identify the specific 1 to 3 products or models currently being discussed or compared.\n"
+            f"Return ONLY a JSON array of strings, e.g. [\"Oppo Reno 16c\", \"Motorola Edge Pro+\"]. If none, return []."
+        )
+        resp = gemini_service.generate_response(prompt=prompt)
+        if resp:
+            match = re.search(r'\[\s*\".*?\"\s*\]', resp, re.DOTALL)
+            if match:
+                parsed = json.loads(match.group(0))
+                if isinstance(parsed, list) and parsed:
+                    return [str(p) for p in parsed if len(str(p)) > 2]
+    except Exception as e:
+        logger.debug(f"History product extraction note: {e}")
+
+    return products
+
 
 def intent_router_node(state: CommerceState, tracer: Optional[AgentExecutionTracer] = None) -> Dict[str, Any]:
     step = tracer.start_step(
-        step_name="Intent Understanding",
-        description="Classifying natural language intent and conversation context"
+        step_name="Intent & Context Understanding",
+        description="Analyzing natural language intent and conversation history context"
     ) if tracer else None
 
     raw_msg = state["message"].strip().lower()
     clean_msg = re.sub(r'[^\w\s]', '', raw_msg)
-    # Keywords for shopping/product queries & 24+ partner brands
-    product_keywords = [
-        'headphone', 'earphone', 'earbud', 'audio', 'tws', 'speaker', 'soundbar', 'neckband',
-        'phone', 'mobile', 'smartphone', '5g', 'android', 'iphone',
-        'shoe', 'shoes', 'sneaker', 'sneakers', 'running', 'boots', 'loafers', 'sandals', 'footwear',
-        'watch', 'watches', 'smartwatch', 'wearable', 'ring', 'tracker',
-        'shirt', 'tshirt', 't-shirt', 'trousers', 'pants', 'jogger', 'hoodie', 'apparel', 'fashion',
-        'sunscreen', 'oil', 'facewash', 'face wash', 'scrub', 'serum', 'skincare', 'hair', 'shaving', 'razor', 'beard',
-        'coffee', 'cold brew', 'protein', 'chocolate', 'snack', 'nutrition',
-        'boat', 'noise', 'fireboltt', 'boult', 'portronics', 'mivi', 'crossbeats', 'zebronics',
-        'lava', 'redtape', 'campus', 'sparx', 'woodland', 'snitch', 'souled', 'bewakoof',
-        'mamaearth', 'mcaffeine', 'bombay', 'sleepy', 'owl', 'whole truth',
-        'xiaomi', 'redmi', 'oneplus', 'samsung', 'apple', 'nike', 'puma', 'adidas', 'sony',
-        'buy', 'purchase', 'shop', 'show me', 'recommend', 'looking for', 'find me', 'search for',
-        'under', 'below', 'less than', 'budget', 'price of', 'cost of', 'specs', 'best', 'deal', 'deals'
-    ]
+    history = state.get("history", [])
 
-    # 1. Greetings and general chit-chat
+    # 1. Greetings
     greetings = [
         'hi', 'hello', 'hey', 'namaste', 'hola', 'sup', 'yo', 'good morning', 'good evening', 'good afternoon',
         'how are you', 'how r u', 'who are you', 'what is your name', 'what can you do', 'help', 'help me',
         'thanks', 'thank you', 'ok', 'okay', 'cool', 'nice', 'bye', 'goodbye', 'tell me a joke'
     ]
-
     is_greeting = clean_msg in greetings
 
-    if any(k in raw_msg for k in ['compare', ' vs ', 'difference between', 'better than', 'vs.']):
+    # 2. Review / Community / Follow-up sentiment indicators
+    review_keywords = [
+        'reddit', 'youtube', 'review', 'reviews', 'sentiment', 'user opinion', 'what people say',
+        'what do users say', 'feedback', 'consensus', 'complaints', 'issues', 'problems', 'flaws',
+        'pros and cons', 'pros & cons', 'long term review', 'heating issue', 'battery backup',
+        'camera test', 'gaming test', 'real world'
+    ]
+
+    # Contextual relative references & feature follow-up triggers
+    context_reference_keywords = [
+        'both', 'these', 'them', 'the two', 'either', 'which one', 'which has', 'which is', 'who has',
+        'first one', 'second one', 'former', 'latter', 'of these', 'between these', 'tell me more',
+        'what about', 'how about', 'faster charging', 'charging speed', 'battery life', 'battery backup',
+        'camera quality', 'screen refresh rate', 'waterproof', 'water resistance', 'wireless charging',
+        'gaming performance', 'processor difference', 'heating problem', 'which should i buy',
+        'which is better', 'what do you think', 'what do you recommend'
+    ]
+
+    is_review_query = any(k in raw_msg for k in review_keywords)
+    has_context_ref = any(k in raw_msg for k in context_reference_keywords)
+    is_feature_followup = any(k in raw_msg for k in ['charging', 'battery', 'camera', 'screen', 'display', 'processor', 'refresh rate', 'waterproof', 'ip rating', 'weight', 'storage', 'ram', 'speakers', 'sound']) and any(k in raw_msg for k in ['which', 'who', 'how', 'does', 'is', 'faster', 'better', 'more', 'less', 'difference'])
+
+    search_intent_keywords = ['show me', 'find me', 'recommend me', 'other options', 'cheaper options', 'cheaper phones', 'alternative', 'alternatives', 'under ₹', 'under rs', 'under 1', 'under 2', 'under 3', 'under 4', 'under 5', 'budget of', 'suggest products', 'buy new']
+    has_search_intent = any(k in raw_msg for k in search_intent_keywords)
+
+    if any(k in raw_msg for k in ['compare', ' vs ', 'difference between', 'better than', 'vs.']) and not (has_context_ref and not any(k in raw_msg for k in [' vs ', 'compare '])):
         intent = "COMPARE"
     elif any(k in raw_msg for k in ['watch', 'alert me', 'notify me', 'keep an eye', 'price drop alert', 'track price', 'price radar']):
         intent = "WATCH_PRODUCT"
@@ -77,15 +128,105 @@ def intent_router_node(state: CommerceState, tracer: Optional[AgentExecutionTrac
         intent = "TRACK_ORDER"
     elif any(k in raw_msg for k in ['return policy', 'refund', 'warranty', 'delivery time', 'is it secure', 'payment methods']):
         intent = "FAQ_POLICY"
-    elif is_greeting:
+    elif (is_review_query or has_context_ref or is_feature_followup) and not has_search_intent and history:
+        # User is asking a contextual follow-up or review inquiry about ongoing products!
+        intent = "REVIEW_FOLLOWUP"
+    elif is_greeting and not history:
         intent = "GREETING"
     else:
         intent = "SEARCH_RECOMMEND"
 
     if step:
-        step.complete({"detected_intent": intent, "raw_query": state["message"]})
+        step.complete({"detected_intent": intent, "raw_query": state["message"], "has_history": len(history) > 0})
 
     return {"intent": intent}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. CONTEXTUAL REVIEW & COMMUNITY SENTIMENT NODE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def review_followup_node(state: CommerceState, tracer: Optional[AgentExecutionTracer] = None) -> Dict[str, Any]:
+    step = tracer.start_step(
+        step_name="Community & Sentiment Research",
+        description="Extracting verified Reddit discussions, reviewer consensus, and user feedback for products in conversation context",
+        tool_name="fetch_community_sentiment"
+    ) if tracer else None
+
+    msg = state["message"]
+    history = state.get("history", [])
+
+    # 1. Resolve Products in Context from Conversation History
+    context_products = extract_context_products_from_history(history, msg)
+    if not context_products:
+        raw_words = [w for w in re.findall(r'[a-zA-Z0-9]+', msg) if len(w) > 3 and w.lower() not in {'reddit', 'youtube', 'reviews', 'review', 'search', 'both', 'these', 'them', 'what', 'about', 'find'}]
+        if raw_words:
+            context_products = [" ".join(raw_words)]
+        else:
+            context_products = ["the discussed products"]
+
+    # 2. Live Multi-Product Community & Technical Research
+    reddit_findings = {}
+    reviewer_findings = {}
+    spec_findings = {}
+    for prod_name in context_products[:2]:
+        if prod_name != "the discussed products":
+            reddit_posts = research_engine.fetch_reddit_discussions(prod_name)
+            reviewer_data = research_engine.fetch_youtube_and_web_reviewer_consensus(prod_name)
+            specs_data = research_engine.fetch_live_web_specifications(prod_name)
+            reddit_findings[prod_name] = reddit_posts[:3]
+            reviewer_findings[prod_name] = reviewer_data
+            spec_findings[prod_name] = specs_data.get("raw_snippets", [])[:2]
+
+    # 3. Dynamic LLM Synthesis with Short-Term Memory
+    sentiment_prompt = (
+        f"You are Mitrai Shopping AI, an expert e-commerce research assistant with live access to verified web technical specifications, Reddit discussions, and YouTube reviewer consensus.\n\n"
+        f"CONVERSATION HISTORY:\n"
+        f"{json.dumps(history[-6:], indent=2)}\n\n"
+        f"USER FOLLOW-UP QUERY:\n"
+        f"'{msg}'\n\n"
+        f"VERIFIED PRODUCTS IN CONVERSATION CONTEXT:\n"
+        f"{json.dumps(context_products)}\n\n"
+        f"LIVE TECHNICAL SPECIFICATIONS RESEARCH:\n"
+        f"{json.dumps(spec_findings, indent=2)}\n\n"
+        f"VERIFIED REDDIT DISCUSSIONS & COMMUNITY SENTIMENT:\n"
+        f"{json.dumps(reddit_findings, indent=2)}\n\n"
+        f"VERIFIED YOUTUBE & WEB REVIEWER CONSENSUS:\n"
+        f"{json.dumps(reviewer_findings, indent=2)}\n\n"
+        f"INSTRUCTIONS:\n"
+        f"1. Stick STRICTLY to the ongoing conversation context about these specific products ({', '.join(context_products)}). Do NOT search for or recommend unrelated new products.\n"
+        f"2. ADAPTIVE LENGTH & DIRECTNESS:\n"
+        f"   - If the user asked a SPECIFIC, TARGETED FEATURE QUESTION (e.g. 'which has faster charging?', 'what is the battery life?', 'is it waterproof?', 'which has better camera?', 'does it support wireless charging?'):\n"
+        f"     -> Answer DIRECTLY and CONCISELY in 2 to 4 sentences.\n"
+        f"     -> State exact numbers and comparisons (e.g. 125W TurboPower vs 80W SuperVOOC).\n"
+        f"     -> Clearly conclude which is better for that feature and cite the source (e.g. *(Source: Verified Manufacturer Specs / GSMArena)*).\n"
+        f"     -> Do NOT dump unrequested full 10-point specs or boilerplate intros.\n"
+        f"   - If the user asked for a BROAD REVIEW OR SENTIMENT (e.g. 'reddit reviews of both', 'what are users saying about them?'):\n"
+        f"     -> Provide the structured breakdown highlighting real Reddit user experiences, common complaints, and overall reviewer takeaway.\n"
+        f"Format with clean markdown."
+    )
+
+    llm_resp = gemini_service.generate_response(prompt=sentiment_prompt, history=history)
+    if not llm_resp:
+        llm_resp = "There is an error right now. Please chat later."
+
+    if step:
+        step.complete({
+            "context_products": context_products,
+            "reddit_threads_analyzed": sum(len(v) for v in reddit_findings.values()),
+            "status": "SENTIMENT_SYNTHESIS_COMPLETE"
+        })
+
+    return {
+        "response_message": llm_resp,
+        "products": [],
+        "comparison": None,
+        "cart": None,
+        "suggested_actions": [
+            {"label": "Compare Full Specs", "action": f"Compare {' vs '.join(context_products[:2])}"} if len(context_products) >= 2 else {"label": "Explore Deals", "action": "SEARCH_RECOMMEND"},
+            {"label": "Add to Cart", "action": "MANAGE_CART"}
+        ]
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────

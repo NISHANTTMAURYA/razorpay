@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from .graph import (
     intent_router_node,
     greeting_node,
+    review_followup_node,
     search_recommend_node,
     comparison_node,
     cart_management_node,
@@ -56,6 +57,8 @@ class CommerceAgentEngine:
             # 2. Dispatch to designated LangGraph node
             if intent == "GREETING":
                 result = greeting_node(state, tracer=active_tracer)
+            elif intent == "REVIEW_FOLLOWUP":
+                result = review_followup_node(state, tracer=active_tracer)
             elif intent == "COMPARE":
                 result = comparison_node(state, tracer=active_tracer)
             elif intent == "WATCH_PRODUCT":

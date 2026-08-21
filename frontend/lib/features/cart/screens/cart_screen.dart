@@ -7,6 +7,7 @@ import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
 import '../../../shared/widgets/brik_header_card.dart';
 import '../../../shared/widgets/pill_badge.dart';
+import '../../../core/utils/image_utils.dart';
 import '../../checkout/screens/checkout_sheet.dart';
 import '../../orders/screens/order_tracking_screen.dart';
 import '../../orders/screens/my_orders_screen.dart';
@@ -208,9 +209,10 @@ class CartScreen extends StatelessWidget {
                     final unitPrice = double.tryParse(item['unit_price']?.toString() ?? '0') ?? 0;
                     final lineTotal = unitPrice * qty;
                     final imagesList = prod['images'] as List?;
-                    final imageUrl = (imagesList != null && imagesList.isNotEmpty)
+                    final rawImgUrl = (imagesList != null && imagesList.isNotEmpty)
                         ? imagesList.first.toString()
                         : (prod['image_url']?.toString() ?? '');
+                    final imageUrl = getHighResImageUrl(rawImgUrl);
                     final prodName = prod['name']?.toString() ?? item['product_name']?.toString() ?? 'Product';
 
                     return Dismissible(
