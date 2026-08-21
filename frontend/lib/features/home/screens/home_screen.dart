@@ -234,8 +234,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(height: 8),
                 Text(
                   catalog.products.isNotEmpty
-                      ? 'Connected to ${catalog.products.length} live merchant products across 24 direct brands.'
-                      : 'Connected to 24 live merchant APIs and real-time scrapers.',
+                      ? 'Connected to ${catalog.products.length} live merchant products across integrated direct brands.'
+                      : 'Connected to live merchant APIs and real-time scrapers.',
                   style: const TextStyle(
                     color: BrikTheme.textSecondaryOnDark,
                     fontSize: 12.5,

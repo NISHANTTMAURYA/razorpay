@@ -110,22 +110,22 @@ class BaseMerchantClient(ABC):
         q_lower = query.lower().strip()
         tokens = [t for t in re.findall(r'\b\w+\b', q_lower) if len(t) > 2 and t not in {'the', 'and', 'for', 'with', 'under', 'below', 'best', 'good', 'find', 'show', 'can', 'you', 'give', 'need', 'want'}]
 
-        # Detect category from query with word boundaries
+        # Detect category from query — fuzzy-tolerant (handles typos like "phonea")
         detected_category = category
         if not detected_category:
             if re.search(r'\b(?:headphone|headphones|earphone|earphones|earbud|earbuds|audio|tws|airpod|airpods|sound|speaker|soundbar|neckband)\b', q_lower):
                 detected_category = "Audio"
-            elif re.search(r'\b(?:phone|phones|smartphone|smartphones|mobile|mobiles|5g|android|iphone)\b', q_lower):
+            elif re.search(r'(?:phone|phon|fone|smartphone|mobile|mobil|5g|android|iphone)', q_lower) and not re.search(r'headphone|earphone', q_lower):
                 detected_category = "Smartphones"
-            elif re.search(r'\b(?:shoe|shoes|sneaker|sneakers|running|footwear|runner|boots|loafers|sandals)\b', q_lower):
+            elif re.search(r'(?:shoe|sneaker|running shoe|footwear|boot|loafer|sandal)', q_lower):
                 detected_category = "Footwear"
-            elif re.search(r'\b(?:watch|watches|smartwatch|smartwatches|wearable|wearables|ring|tracker)\b', q_lower):
+            elif re.search(r'(?:watch|smartwatch|wearable|fitness band|ring|tracker)', q_lower):
                 detected_category = "Wearables"
-            elif re.search(r'\b(?:shirt|shirts|tshirt|t-shirts|oversized|trousers|pants|hoodie|clothing|apparel|menswear|streetwear|tee)\b', q_lower):
+            elif re.search(r'(?:shirt|tshirt|t-shirt|oversized|trouser|pant|hoodie|clothing|apparel|menswear|streetwear|tee)\b', q_lower):
                 detected_category = "Fashion"
-            elif re.search(r'\b(?:hair|skin|facewash|face wash|scrub|oil|serum|sunscreen|grooming|razor|shaving|beard|beauty|lotion)\b', q_lower):
+            elif re.search(r'(?:hair|skin|facewash|face wash|scrub|oil|serum|sunscreen|grooming|razor|shaving|beard|beauty|lotion)', q_lower):
                 detected_category = "Personal Care"
-            elif re.search(r'\b(?:coffee|cold brew|dark roast|protein|chocolate|snacks|nutrition|peanut butter|bars)\b', q_lower):
+            elif re.search(r'(?:coffee|cold brew|dark roast|protein|chocolate|snack|nutrition|peanut butter|bar)\b', q_lower):
                 detected_category = "Food & Nutrition"
 
         for item in catalog:
@@ -1142,10 +1142,11 @@ class MerchantGatewayManager:
                 logger.error(f"Error fetching catalog from {client.merchant_name}: {e}")
         return [dto.to_dict() for dto in all_dtos]
 
-    def search_all_merchants(self, query: str = "", category: Optional[str] = None, max_price: Optional[float] = None, min_price: Optional[float] = None) -> List[Dict[str, Any]]:
-        """Concurrently searches across all registered merchant endpoints."""
+    def search_all_merchants(self, query: str = "", category: Optional[str] = None, max_price: Optional[float] = None, min_price: Optional[float] = None, merchant_slug: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Concurrently searches across registered merchant endpoints with optional merchant filtering."""
         matched_dtos: List[MerchantProductDTO] = []
-        for client in self.clients.values():
+        clients_to_query = [self.clients[merchant_slug]] if (merchant_slug and merchant_slug in self.clients) else self.clients.values()
+        for client in clients_to_query:
             try:
                 res = client.search_products(query=query, category=category, max_price=max_price, min_price=min_price)
                 matched_dtos.extend(res)
@@ -1155,6 +1156,26 @@ class MerchantGatewayManager:
         # Sort by relevance & review count
         matched_dtos.sort(key=lambda x: (x.rating, x.review_count), reverse=True)
         return [dto.to_dict() for dto in matched_dtos]
+
+    def get_onboarded_merchants(self, category: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Returns all registered direct brand merchants, optionally filtered by category."""
+        merchants = []
+        for client in self.clients.values():
+            try:
+                catalog = client.fetch_catalog()
+                client_categories = set(p.category for p in catalog)
+                if not category or any(c.lower() == category.lower() for c in client_categories):
+                    merchants.append({
+                        "name": client.merchant_name,
+                        "slug": client.merchant_slug,
+                        "logo_url": client.logo_url,
+                        "categories": list(client_categories),
+                        "product_count": len(catalog),
+                        "is_direct_partner": True
+                    })
+            except Exception:
+                continue
+        return merchants
 
     def get_product_by_id(self, product_id: str) -> Optional[Dict[str, Any]]:
         for client in self.clients.values():

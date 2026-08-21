@@ -25,6 +25,7 @@ class CommerceAgentEngine:
         history: Optional[List[Dict[str, str]]] = None,
         user_id: Optional[str] = None,
         cart_id: Optional[str] = None,
+        include_merchants: bool = True,
         tracer: Optional[AgentExecutionTracer] = None
     ) -> Dict[str, Any]:
         active_tracer = tracer or AgentExecutionTracer()
@@ -34,6 +35,7 @@ class CommerceAgentEngine:
             "history": history or [],
             "user_id": user_id,
             "cart_id": cart_id,
+            "include_merchants": include_merchants,
             "intent": None,
             "products": [],
             "comparison": None,
@@ -41,6 +43,7 @@ class CommerceAgentEngine:
             "order": None,
             "suggested_actions": [],
             "response_message": "",
+            "intermediate_response": None,
             "steps": []
         }
 
@@ -77,6 +80,7 @@ class CommerceAgentEngine:
 
             return {
                 "response": result.get("response_message", ""),
+                "intermediate_response": result.get("intermediate_response"),
                 "intent": intent,
                 "products": result.get("products", []),
                 "comparison": result.get("comparison"),
@@ -88,6 +92,7 @@ class CommerceAgentEngine:
             logger.error(f"Error processing agent message: {e}", exc_info=True)
             return {
                 "response": "There is an error right now. Please chat later.",
+                "intermediate_response": None,
                 "intent": "ERROR",
                 "products": [],
                 "comparison": None,

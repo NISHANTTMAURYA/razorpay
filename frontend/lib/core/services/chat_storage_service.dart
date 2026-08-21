@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'supabase_auth_service.dart';
 
 class ChatSession {
   final String id;
@@ -40,18 +41,37 @@ class ChatSession {
 }
 
 class ChatStorageService {
-  static const String _sessionsKey = 'mitrai_chat_sessions_v2';
-  static const String _activeSessionKey = 'mitrai_active_chat_session_id_v2';
+  static const String _legacySessionsKey = 'mitrai_chat_sessions_v2';
+  static const String _legacyActiveSessionKey = 'mitrai_active_chat_session_id_v2';
 
   static final ChatStorageService _instance = ChatStorageService._internal();
   factory ChatStorageService() => _instance;
   ChatStorageService._internal();
 
+  String get _sessionsKey {
+    final uid = SupabaseAuthService().userId;
+    return 'mitrai_chat_sessions_v3_$uid';
+  }
+
+  String get _activeSessionKey {
+    final uid = SupabaseAuthService().userId;
+    return 'mitrai_active_chat_session_id_v3_$uid';
+  }
+
   /// Loads all saved chat sessions sorted by most recent
   Future<List<ChatSession>> getSessions() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_sessionsKey);
+      String? raw = prefs.getString(_sessionsKey);
+
+      // Fallback & auto-migration from legacy global keys
+      if ((raw == null || raw.isEmpty) && prefs.containsKey(_legacySessionsKey)) {
+        raw = prefs.getString(_legacySessionsKey);
+        if (raw != null && raw.isNotEmpty) {
+          await prefs.setString(_sessionsKey, raw);
+        }
+      }
+
       if (raw == null || raw.isEmpty) return [];
 
       final List decoded = jsonDecode(raw);
@@ -79,6 +99,8 @@ class ChatStorageService {
       final encoded = jsonEncode(sessions.map((s) => s.toJson()).toList());
       await prefs.setString(_sessionsKey, encoded);
       await prefs.setString(_activeSessionKey, session.id);
+      // Also backup to legacy key for cross-session access
+      await prefs.setString(_legacySessionsKey, encoded);
     } catch (_) {}
   }
 
@@ -91,13 +113,15 @@ class ChatStorageService {
 
       final encoded = jsonEncode(sessions.map((s) => s.toJson()).toList());
       await prefs.setString(_sessionsKey, encoded);
+      await prefs.setString(_legacySessionsKey, encoded);
 
-      final activeId = prefs.getString(_activeSessionKey);
+      final activeId = prefs.getString(_activeSessionKey) ?? prefs.getString(_legacyActiveSessionKey);
       if (activeId == sessionId) {
         if (sessions.isNotEmpty) {
           await prefs.setString(_activeSessionKey, sessions.first.id);
         } else {
           await prefs.remove(_activeSessionKey);
+          await prefs.remove(_legacyActiveSessionKey);
         }
       }
     } catch (_) {}
@@ -107,7 +131,7 @@ class ChatStorageService {
   Future<String?> getActiveSessionId() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getString(_activeSessionKey);
+      return prefs.getString(_activeSessionKey) ?? prefs.getString(_legacyActiveSessionKey);
     } catch (_) {
       return null;
     }
@@ -118,6 +142,7 @@ class ChatStorageService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_activeSessionKey, sessionId);
+      await prefs.setString(_legacyActiveSessionKey, sessionId);
     } catch (_) {}
   }
 }

@@ -428,7 +428,7 @@ class _ProductDetailSheetState extends State<ProductDetailSheet> {
                                   Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 18),
                                   SizedBox(width: 8),
                                   Text(
-                                    'YouTube & Reddit (r/IndiaTech) Consensus',
+                                    'Video & Community Review Consensus',
                                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12),
                                   ),
                                 ],

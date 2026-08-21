@@ -37,8 +37,8 @@ class DynamicMarketplaceEngine:
         self.tavily_key = os.getenv("TAVILY_API_KEY")
         self.gemini_key = os.getenv("GEMINI_API_KEY")
 
-    def scrape_amazon_direct(self, query: str, category: Optional[str] = None, max_price: Optional[float] = None) -> List[Dict[str, Any]]:
-        """Direct live HTML scraper for Amazon India with fast 2s timeout."""
+    def scrape_amazon_direct(self, query: str, category: Optional[str] = None, max_price: Optional[float] = None, min_price: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Direct live HTML scraper for Amazon India with fast timeout and price range filtering."""
         results = []
         try:
             url = f"https://www.amazon.in/s?k={urllib.parse.quote(query.strip())}"
@@ -48,7 +48,7 @@ class DynamicMarketplaceEngine:
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 items = soup.find_all('div', {'data-component-type': 's-search-result'})
 
-                for item in items[:6]:
+                for item in items:
                     title_el = item.find('h2')
                     price_el = item.find('span', {'class': 'a-price-whole'})
                     img_el = item.find('img', {'class': 's-image'})
@@ -60,7 +60,11 @@ class DynamicMarketplaceEngine:
                         raw_price = price_el.get_text().strip().replace(',', '')
                         price = float(raw_price) if raw_price.isdigit() else 0
 
-                        if price == 0 or (max_price and price > max_price * 1.15):
+                        if price == 0:
+                            continue
+                        if max_price and price > max_price * 1.15:
+                            continue
+                        if min_price and price < min_price * 0.85:
                             continue
 
                         img_url = img_el.get('src') if img_el else 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600'
@@ -103,14 +107,12 @@ class DynamicMarketplaceEngine:
                                 "is_active": True
                             }
                         })
-                        if len(results) >= 2:
-                            break
         except Exception as e:
             logger.debug(f"Direct Amazon scrape note: {e}")
 
         return results
 
-    def dynamic_llm_marketplace_search(self, query: str, category: Optional[str] = None, max_price: Optional[float] = None) -> List[Dict[str, Any]]:
+    def dynamic_llm_marketplace_search(self, query: str, category: Optional[str] = None, max_price: Optional[float] = None, min_price: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         Dynamically extracts structured products from any marketplace (Flipkart, Blinkit, Zepto, Croma, etc.)
         using live Web Search + Gemini structured JSON extraction.
@@ -122,8 +124,16 @@ class DynamicMarketplaceEngine:
             from tavily import TavilyClient
             client = TavilyClient(api_key=self.tavily_key)
 
-            search_query = f"buy {query} price inr India (Flipkart OR Blinkit OR Zepto OR Croma OR Myntra)"
-            t_res = client.search(query=search_query, max_results=5, search_depth="basic")
+            price_hint = ""
+            if min_price and max_price:
+                price_hint = f" between {int(min_price)} and {int(max_price)} inr"
+            elif max_price:
+                price_hint = f" under {int(max_price)} inr"
+            elif min_price:
+                price_hint = f" above {int(min_price)} inr"
+
+            search_query = f"buy {query}{price_hint} price inr India (Flipkart OR Blinkit OR Zepto OR Croma OR Myntra)"
+            t_res = client.search(query=search_query, max_results=8, search_depth="basic")
             raw_results = t_res.get("results", [])
 
             if not raw_results:
@@ -131,15 +141,14 @@ class DynamicMarketplaceEngine:
 
             # Dynamic Extraction with Gemini
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.gemini_key)
-                model = genai.GenerativeModel("gemini-2.5-flash")
+                from .llm_service import gemini_service
 
+                budget_str = f" Target budget: ₹{int(min_price):,} - ₹{int(max_price):,}." if (min_price and max_price) else (f" Target max budget: ₹{int(max_price):,}." if max_price else "")
                 prompt = f"""You are a dynamic e-commerce web extraction engine.
-Extract up to 2 real distinct product listings from the raw web search data below for query '{query}'.
+Extract all distinct product listings found in the raw web search data below for query '{query}'.{budget_str}
 
 Raw Web Data:
-{json.dumps(raw_results[:4])}
+{json.dumps(raw_results)}
 
 Output STRICTLY a JSON array of objects matching this schema (zero markdown outside the json):
 [
@@ -157,8 +166,8 @@ Output STRICTLY a JSON array of objects matching this schema (zero markdown outs
   }}
 ]
 """
-                resp = model.generate_content(prompt)
-                clean_json_text = resp.text.strip()
+                resp_text = gemini_service.generate_response(prompt=prompt)
+                clean_json_text = (resp_text or "").strip()
                 if "```json" in clean_json_text:
                     clean_json_text = clean_json_text.split("```json")[1].split("```")[0].strip()
                 elif "```" in clean_json_text:
@@ -179,6 +188,8 @@ Output STRICTLY a JSON array of objects matching this schema (zero markdown outs
                     if price == 0:
                         continue
                     if max_price and price > max_price * 1.15:
+                        continue
+                    if min_price and price < min_price * 0.85:
                         continue
 
                     raw_op = p.get("original_price")
@@ -242,18 +253,15 @@ Output STRICTLY a JSON array of objects matching this schema (zero markdown outs
 
         return []
 
-    def search_all_external_marketplaces(self, query: str, category: Optional[str] = None, max_price: Optional[float] = None) -> List[Dict[str, Any]]:
+    def search_all_external_marketplaces(self, query: str, category: Optional[str] = None, max_price: Optional[float] = None, min_price: Optional[float] = None) -> List[Dict[str, Any]]:
         """
         Runs Direct Amazon scraper and Dynamic LLM multi-marketplace search (Flipkart, Blinkit, Zepto, etc.)
-        and returns consolidated external product recommendations.
+        and returns consolidated external product recommendations with no artificial item limits.
         """
-        amazon_items = self.scrape_amazon_direct(query=query, category=category, max_price=max_price)
-        if len(amazon_items) >= 2:
-            return amazon_items[:2]
-
-        dynamic_items = self.dynamic_llm_marketplace_search(query=query, category=category, max_price=max_price)
+        amazon_items = self.scrape_amazon_direct(query=query, category=category, max_price=max_price, min_price=min_price)
+        dynamic_items = self.dynamic_llm_marketplace_search(query=query, category=category, max_price=max_price, min_price=min_price)
         all_items = amazon_items + dynamic_items
-        return all_items[:2]
+        return all_items
 
 
 class MultiSourceResearchService:
@@ -347,21 +355,36 @@ class MultiSourceResearchService:
     def fetch_youtube_and_web_reviewer_consensus(self, product_name: str) -> Dict[str, Any]:
         """
         Dynamically searches YouTube and tech review blogs via Tavily AI,
-        and uses Gemini to extract real reviewer consensus, pros, and cons.
+        and uses Gemini to extract real reviewer consensus, pros, cons, and video links.
         """
         raw_review_snippets = []
+        video_sources = []
 
         if self.tavily_key:
             try:
                 from tavily import TavilyClient
                 client = TavilyClient(api_key=self.tavily_key)
-                search_query = f"{product_name} detailed review pros cons rating verdict"
+                search_query = f"{product_name} detailed review benchmark pros cons rating verdict"
                 t_res = client.search(
                     query=search_query,
                     max_results=5,
                     search_depth="basic"
                 )
-                raw_review_snippets = [r.get("content", "") for r in t_res.get("results", [])]
+                for r in t_res.get("results", []):
+                    raw_review_snippets.append(r.get("content", ""))
+                    title = r.get("title", f"Review for {product_name}")
+                    url = r.get("url", "")
+                    channel = "Tech Reviewer"
+                    if "youtube.com" in url or "youtu.be" in url:
+                        channel = title.split("-")[-1].strip() if "-" in title else "YouTube Creator"
+                    elif "reddit.com" not in url:
+                        channel = urllib.parse.urlparse(url).netloc.replace("www.", "")
+
+                    video_sources.append({
+                        "channel": channel,
+                        "title": title[:70],
+                        "video_url": url
+                    })
             except Exception as e:
                 logger.debug(f"Tavily reviewer dynamic search note: {e}")
 
@@ -396,7 +419,8 @@ Output STRICTLY JSON with keys: "sentiment_score", "pros", "cons", "verdict". No
                     "sentiment_score": int(parsed.get("sentiment_score", 90)),
                     "pros": parsed.get("pros", ["Reliable performance", "Strong build quality", "Good battery life"]),
                     "cons": parsed.get("cons", ["Minor cosmetic compromises", "Standard charging speed"]),
-                    "verdict": parsed.get("verdict", f"Positive consensus across tech reviewers for {product_name}.")
+                    "verdict": parsed.get("verdict", f"Positive consensus across tech reviewers for {product_name}."),
+                    "videos": video_sources[:3]
                 }
             except Exception as e:
                 logger.debug(f"Gemini reviewer synthesis note: {e}")
@@ -414,7 +438,8 @@ Output STRICTLY JSON with keys: "sentiment_score", "pros", "cons", "verdict". No
                 "Segment-standard accessory bundle",
                 "Minor software or fine-tuning nuances"
             ],
-            "verdict": f"Verified positive consensus across creators and tech blogs in its category."
+            "verdict": f"Verified positive consensus across creators and tech blogs in its category.",
+            "videos": video_sources[:2]
         }
 
     def synthesize_product_intelligence(self, product_name: str, specs: Dict[str, Any], price: float) -> Dict[str, Any]:

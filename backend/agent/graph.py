@@ -1,4 +1,5 @@
 import re
+import json
 import logging
 from typing import TypedDict, List, Dict, Any, Optional
 from decimal import Decimal
@@ -130,78 +131,198 @@ def search_recommend_node(state: CommerceState, tracer: Optional[AgentExecutionT
 
     msg = state["message"].lower()
 
-    # Price parsing
+    # 1. Dynamic Budget & Price Range Extraction (handles ranges like 45k-50k, between, under, above, around)
+    min_price = None
     max_price = None
-    price_match = re.search(r'(?:under|below|less than)\s*(?:₹|rs\.?)?\s*(\d+(?:,\d+)*(?:k)?)', msg)
-    if price_match:
-        val_str = price_match.group(1).replace(',', '')
-        max_price = float(val_str[:-1]) * 1000 if val_str.endswith('k') else float(val_str)
 
-    # Detect category intent with word boundaries (avoid 'phone' matching 'headphone')
+    # Check for price range: "range of 45k-50k", "between 45k and 50k", "45k to 50k", "45k-50k", "45000 to 50000"
+    range_match = re.search(r'(?:(?:in\s+a\s+)?range\s+(?:of\s+)?)?(?:between\s+)?(?:₹|rs\.?)?\s*(\d+(?:,\d+)*(?:k)?)\s*(?:-|to|and)\s*(?:₹|rs\.?)?\s*(\d+(?:,\d+)*(?:k)?)', msg)
+    if range_match:
+        v1_str = range_match.group(1).replace(',', '')
+        v2_str = range_match.group(2).replace(',', '')
+        p1 = float(v1_str[:-1]) * 1000 if v1_str.endswith('k') else float(v1_str)
+        p2 = float(v2_str[:-1]) * 1000 if v2_str.endswith('k') else float(v2_str)
+        min_price = min(p1, p2)
+        max_price = max(p1, p2)
+    else:
+        # Check max price: under, below, less than, within, upto, max
+        max_match = re.search(r'(?:under|below|less than|within|upto|up to|max(?:imum)?)\s*(?:₹|rs\.?)?\s*(\d+(?:,\d+)*(?:k)?)', msg)
+        if max_match:
+            v_str = max_match.group(1).replace(',', '')
+            max_price = float(v_str[:-1]) * 1000 if v_str.endswith('k') else float(v_str)
+
+        # Check min price: above, more than, greater than, at least, min
+        min_match = re.search(r'(?:above|more than|greater than|at least|min(?:imum)?)\s*(?:₹|rs\.?)?\s*(\d+(?:,\d+)*(?:k)?)', msg)
+        if min_match:
+            v_str = min_match.group(1).replace(',', '')
+            min_price = float(v_str[:-1]) * 1000 if v_str.endswith('k') else float(v_str)
+
+        # Check around/approx price: around 45k -> 38k to 52k
+        around_match = re.search(r'(?:around|approx(?:imately)?)\s*(?:₹|rs\.?)?\s*(\d+(?:,\d+)*(?:k)?)', msg)
+        if around_match and not max_price and not min_price:
+            v_str = around_match.group(1).replace(',', '')
+            target = float(v_str[:-1]) * 1000 if v_str.endswith('k') else float(v_str)
+            min_price = target * 0.85
+            max_price = target * 1.15
+
+    # 2. Category intent detection — fuzzy & typo-tolerant with bluetooth / wireless support
     category = None
-    if re.search(r'\b(?:headphone|headphones|earphone|earphones|earbud|earbuds|audio|tws|airpod|airpods|sound|speaker|soundbar|neckband)\b', msg):
+    if re.search(r'\b(?:headphone|headphones|earphone|earphones|earbud|earbuds|audio|tws|airpod|airpods|sound|speaker|soundbar|neckband|bluetooth|wireless)\b', msg):
         category = "Audio"
-    elif re.search(r'\b(?:phone|phones|smartphone|smartphones|mobile|mobiles|5g|android|iphone)\b', msg):
+    elif re.search(r'(?:phone|phon|fone|smartphone|mobile|mobil|5g|android|iphone)', msg) and not re.search(r'headphone|earphone|audio', msg):
         category = "Smartphones"
-    elif re.search(r'\b(?:shoe|shoes|sneaker|sneakers|running|footwear|runner|boots|loafers|sandals)\b', msg):
+    elif re.search(r'(?:shoe|sneaker|running shoe|footwear|boot|loafer|sandal)', msg):
         category = "Footwear"
-    elif re.search(r'\b(?:watch|watches|smartwatch|smartwatches|wearable|wearables|ring|tracker)\b', msg):
+    elif re.search(r'(?:watch|smartwatch|wearable|fitness band|ring|tracker)', msg):
         category = "Wearables"
-    elif re.search(r'\b(?:shirt|shirts|tshirt|t-shirts|oversized|trousers|pants|hoodie|clothing|apparel|menswear|streetwear|tee)\b', msg):
+    elif re.search(r'(?:shirt|tshirt|t-shirt|oversized|trouser|pant|hoodie|clothing|apparel|menswear|streetwear|tee)\b', msg):
         category = "Fashion"
-    elif re.search(r'\b(?:hair|skin|facewash|face wash|scrub|oil|serum|sunscreen|grooming|razor|shaving|beard|beauty|lotion)\b', msg):
+    elif re.search(r'(?:hair|skin|facewash|face wash|scrub|oil|serum|sunscreen|grooming|razor|shaving|beard|beauty|lotion)', msg):
         category = "Personal Care"
-    elif re.search(r'\b(?:coffee|cold brew|dark roast|protein|chocolate|snacks|nutrition|peanut butter|bars)\b', msg):
+    elif re.search(r'(?:coffee|cold brew|dark roast|protein|chocolate|snack|nutrition|peanut butter|bar)\b', msg):
         category = "Food & Nutrition"
 
-    # 1. Query 24 on-platform merchant clients
-    platform_products = merchant_gateway.search_all_merchants(query=msg, category=category, max_price=max_price)
-    if not platform_products and category:
-        platform_products = merchant_gateway.search_all_merchants(category=category)
-    if not platform_products:
-        platform_products = merchant_gateway.search_all_merchants()[:2]
+    # Multi-turn History Context: If category not in current turn, inherit from recent conversation history
+    history = state.get("history", [])
+    if not category and history:
+        for turn in reversed(history[-6:]):
+            prev_text = turn.get("content", "").lower()
+            if re.search(r'\b(?:headphone|headphones|earphone|earphones|earbud|earbuds|audio|tws|airpod|sound|speaker|bluetooth|wireless)\b', prev_text):
+                category = "Audio"
+                break
+            elif re.search(r'(?:phone|phon|fone|smartphone|mobile|mobil|5g|android|iphone)', prev_text) and not re.search(r'headphone|earphone|audio', prev_text):
+                category = "Smartphones"
+                break
+            elif re.search(r'(?:shoe|sneaker|running shoe|footwear|boot|loafer)', prev_text):
+                category = "Footwear"
+                break
+            elif re.search(r'(?:watch|smartwatch|wearable|fitness band|ring|tracker)', prev_text):
+                category = "Wearables"
+                break
+            elif re.search(r'(?:shirt|tshirt|t-shirt|oversized|trouser|pant|hoodie|clothing|apparel)', prev_text):
+                category = "Fashion"
+                break
+            elif re.search(r'(?:hair|skin|facewash|face wash|scrub|oil|serum|sunscreen|grooming|razor)', prev_text):
+                category = "Personal Care"
+                break
+            elif re.search(r'(?:coffee|cold brew|protein|chocolate|snack|nutrition)', prev_text):
+                category = "Food & Nutrition"
+                break
+
+    # 3. Dynamic Merchant Products Toggle Check (from UI toggle or query text)
+    include_merchants = state.get("include_merchants", True)
+    if re.search(r'(?:no\s+merchant|only\s+external|hide\s+merchant|external\s+only|marketplace\s+only|stop\s+merchant)', msg):
+        include_merchants = False
+    elif re.search(r'(?:only\s+merchant|brand\s+direct|direct\s+only|show\s+merchant)', msg):
+        include_merchants = True
+
+    # 4. Tool Loop Phase 1: Query On-Platform Merchant API Gateway
+    platform_products = []
+    if include_merchants:
+        platform_products = merchant_gateway.search_all_merchants(query=msg, category=category, min_price=min_price, max_price=max_price)
+        # Note: ONLY relax price if user did NOT explicitly specify a price constraint
+        if not platform_products and category and not max_price and not min_price:
+            platform_products = merchant_gateway.search_all_merchants(category=category)
+        if not platform_products and not category and not max_price and not min_price:
+            platform_products = merchant_gateway.search_all_merchants()[:4]
 
     if step_db:
         step_db.complete({
             "matched_count": len(platform_products),
             "top_match": platform_products[0]["name"] if platform_products else None,
             "detected_category": category,
-            "connected_merchants_queried": 24
+            "connected_merchants_queried": len(merchant_gateway.clients) if include_merchants else 0
         })
 
-    # 2. Dynamic Live Multi-Marketplace & Quick-Commerce Scraping
+    # 5. Dynamic Live Multi-Marketplace & Quick-Commerce Scraping
     step_scrape = tracer.start_step(
-        step_name="Dynamic Marketplace & Quick-Commerce Scraping (Amazon, Flipkart, Blinkit, Zepto)",
+        step_name="Dynamic Marketplace & Quick-Commerce Scraping",
         description="Extracting real-time pricing and stock across external marketplaces and quick-commerce",
         tool_name="search_all_external_marketplaces"
     ) if tracer else None
 
+    # Construct clean search query for external scrapers
+    cleaned_msg = re.sub(r'\b(?:i\s+want|in\s+a\s+range\s+of|between|looking\s+for|find\s+me|show\s+me|give\s+me|search\s+for|please|recommend|best|top|budget|range)\b', '', msg, flags=re.IGNORECASE).strip()
+    search_term = cleaned_msg
+    if category:
+        if not any(k in cleaned_msg.lower() for k in ['phone', 'mobile', 'audio', 'headphone', 'shoe', 'shirt', 'watch', 'coffee', 'bluetooth', 'wireless']):
+            search_term = f"{category} {cleaned_msg}".strip()
+
+    if not search_term or search_term == category:
+        if min_price and max_price:
+            search_term = f"{category or 'products'} {int(min_price)} to {int(max_price)}"
+        elif max_price:
+            search_term = f"{category or 'products'} under {int(max_price)}"
+        else:
+            search_term = category or msg
+
     external_products = dynamic_marketplace_engine.search_all_external_marketplaces(
-        query=msg,
+        query=search_term,
         category=category,
+        min_price=min_price,
         max_price=max_price
     )
 
     if step_scrape:
+        queried_stores = list(set([p.get('attributes', {}).get('marketplace', 'External Store') for p in external_products])) if external_products else ["Live Web Marketplaces"]
         step_scrape.complete({
             "external_deals_found": len(external_products),
-            "marketplaces_queried": ["Amazon India", "Flipkart", "Blinkit", "Zepto", "Croma"]
+            "marketplaces_queried": queried_stores
         })
 
-    # 3. Combine both: On-Platform Direct Merchants + External Marketplaces
-    all_matched = platform_products[:2] + external_products[:2]
-    top_product = platform_products[0] if platform_products else (all_matched[0] if all_matched else None)
+    # 6. Combine both & Enforce strict price range matching
+    all_matched = platform_products + external_products
+    if min_price or max_price:
+        valid_matched = []
+        for p in all_matched:
+            try:
+                p_val = float(p.get('price', 0))
+                if min_price and p_val < min_price * 0.85:
+                    continue
+                if max_price and p_val > max_price * 1.15:
+                    continue
+                valid_matched.append(p)
+            except Exception:
+                valid_matched.append(p)
+        if valid_matched:
+            all_matched = valid_matched
+
+    top_product = all_matched[0] if all_matched else None
+
+    onboarded_merchants = merchant_gateway.get_onboarded_merchants(category=category) if include_merchants else []
+    onboarded_names = [m['name'] for m in onboarded_merchants]
+
+    # 7. Generate Dynamic Intermediate / Preview Response (Sent before final deep synthesis)
+    budget_label = ""
+    if min_price and max_price:
+        budget_label = f" within target budget of ₹{int(min_price):,} – ₹{int(max_price):,}"
+    elif max_price:
+        budget_label = f" under budget of ₹{int(max_price):,}"
+    elif min_price:
+        budget_label = f" above ₹{int(min_price):,}"
+
+    if include_merchants and onboarded_names:
+        m_list = " • ".join([f"**{m}**" for m in onboarded_names[:4]])
+        intermediate_response = (
+            f"🔍 **Discovered {len(onboarded_names)} Connected Brand Stores for {category or 'your query'}:**\n"
+            f"{m_list}\n"
+            f"*(1-Tap instant Razorpay checkout enabled)*\n\n"
+            f"⚡ Checking real-time merchant stocks & scanning live web marketplaces (Amazon, Flipkart, Quick Commerce){budget_label}..."
+        )
+    else:
+        intermediate_response = f"🌐 Scanning live web marketplaces and quick-commerce stores{budget_label} (Direct Merchant Products: OFF)..."
 
     if not top_product:
         return {
-            "response_message": "There is an error right now. Please chat later.",
+            "response_message": f"I couldn't find active products{budget_label}. Try expanding your budget range or searching for another category.",
+            "intermediate_response": intermediate_response,
             "products": [],
             "comparison": None,
             "cart": None,
             "suggested_actions": []
         }
 
-    # 4. Multi-source research step
+    # 8. Multi-source research step (YouTube, Reddit, Web Sentiment)
     step_research = tracer.start_step(
         step_name="Multi-Source Review Research",
         description=f"Synthesizing YouTube tech reviews & Reddit sentiment for {top_product['name']}",
@@ -218,42 +339,133 @@ def search_recommend_node(state: CommerceState, tracer: Optional[AgentExecutionT
         step_research.complete({
             "overall_match_score": intelligence["overall_match_score"],
             "youtube_consensus": intelligence["youtube_consensus"]["verdict"],
-            "reddit_threads_analyzed": len(intelligence["reddit_discussions"])
+            "reddit_threads_analyzed": len(intelligence["reddit_discussions"]),
+            "key_pros": intelligence.get("pros", []),
+            "key_cons": intelligence.get("cons", [])
         })
 
-    # External price mention
-    ext_price_info = ""
-    if external_products:
-        ext_top = external_products[0]
-        ext_price_info = f"\n• 🌐 **External Marketplaces**: Listed on **{ext_top['merchant']['name']}** at ₹{int(float(ext_top['price'])):,}."
+    # 9. Dynamic LLM Grounding with Citations & Source Links
+    step_llm = tracer.start_step(
+        step_name="Agentic LLM Synthesis",
+        description="Synthesizing specifications, Reddit discussions, YouTube review consensus, and verified store links",
+        tool_name="gemini_grounded_synthesis"
+    ) if tracer else None
 
-    resp_msg = (
-        f"Based on direct merchant inventory and live web scraping from **Amazon**, **Flipkart**, **YouTube**, and **Reddit (`r/IndiaTech`)**, "
-        f"here is our grounded recommendation:\n\n"
-        f"⭐ **{top_product['name']}** ({intelligence['overall_match_score']} Match Score • ₹{int(float(top_product['price'])):,})\n"
-        f"• **Specs**: {top_product['description']}\n"
-        f"• **Platform Deal**: {top_product['merchant']['name']} (Verified 1-Tap Razorpay){ext_price_info}\n"
-        f"• **YouTube Consensus**: {intelligence['youtube_consensus']['verdict']}\n"
-        f"• **Community Verdict**: {intelligence['recommendation_summary']}"
+    llm_context = {
+        "user_query": state["message"],
+        "recommended_product": top_product,
+        "all_matched_products": all_matched,
+        "external_marketplaces": external_products,
+        "onboarded_merchants": onboarded_names,
+        "include_merchants": include_merchants,
+        "youtube_consensus": intelligence["youtube_consensus"],
+        "reddit_threads": intelligence["reddit_discussions"],
+        "pros": intelligence.get("pros", []),
+        "cons": intelligence.get("cons", []),
+        "match_score": intelligence["overall_match_score"]
+    }
+
+    llm_prompt = (
+        f"You are Mitrai Shopping AI Agent. The user asked: '{state['message']}'.\n"
+        f"You have conducted live research using real merchant APIs, live marketplace scrapers, "
+        f"dynamic video/web reviews, and live Reddit community threads.\n\n"
+        f"=== REAL-TIME RESEARCH CONTEXT ===\n"
+        f"Recommended Product: {top_product['name']} (Price: ₹{int(float(top_product.get('price', 0))):,})\n"
+        f"All Discovered Products ({len(all_matched)} items): {json.dumps([{'name': p['name'], 'brand': p['brand'], 'price': p['price'], 'source': p.get('source')} for p in all_matched])}\n"
+        f"Onboarded Direct Brand Merchants ({len(onboarded_names)}): {', '.join(onboarded_names)}\n"
+        f"Attributes / Specs: {json.dumps(top_product.get('attributes', {}))}\n"
+        f"Reviewer Consensus & Verdict: {intelligence['youtube_consensus'].get('verdict')}\n"
+        f"Review Pros: {json.dumps(intelligence.get('pros', []))}\n"
+        f"Review Cons: {json.dumps(intelligence.get('cons', []))}\n"
+        f"Live Video / Blog Review Sources: {json.dumps(intelligence['youtube_consensus'].get('videos', []))}\n"
+        f"Live Reddit Discussions: {json.dumps(intelligence.get('reddit_discussions', []))}\n"
+        f"External Store Listings: {json.dumps([{'name': p['name'], 'store': p.get('attributes', {}).get('marketplace'), 'price': p.get('price'), 'url': p.get('attributes', {}).get('external_url')} for p in external_products])}\n"
+        f"===================================\n\n"
+        f"Instructions:\n"
+        f"1. Explain why this product is recommended based on its verified specs and value for money.\n"
+        f"2. Summarize other available matching options found in the requested budget range.\n"
+        f"3. If direct brand merchants are available ({', '.join(onboarded_names[:4])}), highlight that 1-Tap Razorpay checkout is available, and note that the user can toggle between direct brand deals and external marketplace listings.\n"
+        f"4. Summarize video/web reviewer consensus and genuine Reddit buyer feedback from the dynamic sources.\n"
+        f"5. Include direct clickable Markdown hyperlinks to the stores and review discussions using the URLs in context.\n"
+        f"Format with clean Markdown headers, bullet points, and bold text."
     )
 
+    dynamic_llm_response = gemini_service.generate_response(
+        prompt=llm_prompt,
+        history=state.get("history", []),
+        context=llm_context
+    )
+
+    if step_llm:
+        step_llm.complete({"status": "SYNTHESIS_COMPLETE", "model": "gemini-3.6-flash"})
+
+    if not dynamic_llm_response or len(dynamic_llm_response) < 30:
+        # Fallback structured markdown synthesis
+        ext_price_info = ""
+        if external_products:
+            ext_top = external_products[0]
+            ext_url = ext_top.get('attributes', {}).get('external_url', '')
+            ext_price_info = f"\n• 🌐 **External Marketplaces**: Listed on **[{ext_top['merchant']['name']}]({ext_url})** at ₹{int(float(ext_top['price'])):,}." if ext_url else f"\n• 🌐 **External Marketplaces**: Listed on **{ext_top['merchant']['name']}** at ₹{int(float(ext_top['price'])):,}."
+
+        reddit_links = ", ".join([f"[{t.get('source', 'Reddit')}: {t['title'][:30]}...]({t.get('permalink', 'https://reddit.com')})" for t in intelligence.get('reddit_discussions', [])[:2]])
+        youtube_links = ", ".join([f"[{v.get('channel', 'Reviewer')}: {v.get('title', 'Review')[:30]}...]({v.get('video_url', 'https://youtube.com')})" for v in intelligence['youtube_consensus'].get('videos', [])[:2]])
+
+        merchant_list_str = " • ".join([f"**{m}**" for m in onboarded_names[:4]]) if onboarded_names else "Direct Merchant APIs"
+
+        dynamic_llm_response = (
+            f"### 🤖 Mitrai Agent Grounded Recommendation\n\n"
+            f"Based on real-time inventory from **integrated merchant APIs**, live marketplace listings, "
+            f"and live community discussions across the web:\n\n"
+            f"⭐ **{top_product['name']}** ({intelligence['overall_match_score']} Match Score • ₹{int(float(top_product['price'])):,})\n\n"
+            f"• **Hardware & Specs**: {top_product['description']}\n"
+            f"• **Verified Platform Deal**: {top_product['merchant']['name']} (1-Tap Razorpay Checkout){ext_price_info}\n"
+            f"• **🛍️ Onboarded Direct Merchants**: {merchant_list_str} *(1-Tap Instant Pay enabled)*\n"
+            f"• **📺 Video Reviewer Consensus**: {intelligence['youtube_consensus']['verdict']}" + (f"\n  *Sources: {youtube_links}*" if youtube_links else "") + "\n"
+            f"• **💬 Reddit Buyer Sentiment**: {intelligence['recommendation_summary']}" + (f"\n  *Sources: {reddit_links}*" if reddit_links else "") + "\n"
+            f"• **Key Strengths**: {', '.join(intelligence.get('pros', ['Great value', 'Solid build quality']))}\n"
+            f"• **Trade-offs**: {', '.join(intelligence.get('cons', ['Segment-standard compromises']))}"
+        )
+
     suggested = []
-    for p in all_matched[:2]:
-        if p.get("is_platform_product", True):
+    # 1. Toggle Direct Merchants Chip
+    if include_merchants:
+        suggested.append({
+            "label": "🌐 External Deals Only",
+            "action": "TOGGLE_MERCHANTS_OFF",
+            "payload": {"query": f"show external deals only for {msg}", "include_merchants": False}
+        })
+        for m in onboarded_merchants[:3]:
             suggested.append({
-                "label": f"Add {p['brand']} to Bag (₹{int(float(p['price'])):,})",
-                "action": "ADD_TO_CART",
-                "payload": {"product_id": p['id'], "quantity": 1}
+                "label": f"🛍️ {m['name']}",
+                "action": "FILTER_MERCHANT",
+                "payload": {"query": f"show me {m['name']} options"}
             })
+    else:
+        suggested.append({
+            "label": "🛍️ Show Direct Brand Deals",
+            "action": "TOGGLE_MERCHANTS_ON",
+            "payload": {"query": f"show direct brand merchant products for {category or msg}", "include_merchants": True}
+        })
+
+    # 2. 1-Tap Buy action for top direct brand product
+    if top_product.get("is_platform_product", True):
+        suggested.append({
+            "label": f"⚡ 1-Tap Buy {top_product['brand']} (₹{int(float(top_product['price'])):,})",
+            "action": "ADD_TO_CART",
+            "payload": {"product_id": top_product['id'], "quantity": 1}
+        })
+
+    # 3. Compare action
     if len(all_matched) >= 2:
         suggested.append({
-            "label": "Compare Specs Across Stores",
+            "label": "⚖️ Compare Options Side-by-Side",
             "action": "COMPARE",
-            "payload": {"product_ids": [p['id'] for p in all_matched[:3]]}
+            "payload": {"query": "compare the recommended options"}
         })
 
     return {
-        "response_message": resp_msg,
+        "response_message": dynamic_llm_response,
+        "intermediate_response": intermediate_response,
         "products": all_matched,
         "comparison": None,
         "cart": None,
@@ -273,27 +485,33 @@ def comparison_node(state: CommerceState, tracer: Optional[AgentExecutionTracer]
     ) if tracer else None
 
     msg = state.get("message", "").lower()
+    history = state.get("history", [])
     all_prods = merchant_gateway.search_all_merchants()
     products = []
 
-    if "sony" in msg and "boat" in msg:
-        p_sony = next((p for p in all_prods if "sony" in p['name'].lower()), None)
-        p_boat = next((p for p in all_prods if "boat" in p['name'].lower()), None)
-        if p_sony and p_boat:
-            products = [p_sony, p_boat]
-    elif "oneplus" in msg and "samsung" in msg:
-        p_op = next((p for p in all_prods if "oneplus" in p['name'].lower()), None)
-        p_sam = next((p for p in all_prods if "samsung" in p['name'].lower()), None)
-        if p_op and p_sam:
-            products = [p_op, p_sam]
-    elif "nike" in msg and "puma" in msg:
-        p_nike = next((p for p in all_prods if "nike" in p['name'].lower()), None)
-        p_puma = next((p for p in all_prods if "puma" in p['name'].lower()), None)
-        if p_nike and p_puma:
-            products = [p_nike, p_puma]
+    # 1. Dynamic brand & token matching from current user message
+    for prod in all_prods:
+        b_name = prod.get('brand', '').lower()
+        p_name = prod.get('name', '').lower()
+        if (len(b_name) > 2 and b_name in msg) or any(t in msg for t in p_name.split() if len(t) > 3 and t not in {'with', 'than', 'compare', 'show', 'best', 'good'}):
+            if prod not in products:
+                products.append(prod)
+
+    # 2. Multi-turn History: If user says "compare them" or provides <2 products, extract from recent turns
+    if len(products) < 2 and history:
+        for turn in reversed(history[-6:]):
+            turn_text = turn.get("content", "").lower()
+            for prod in all_prods:
+                b_name = prod.get('brand', '').lower()
+                p_name = prod.get('name', '').lower()
+                if (len(b_name) > 2 and b_name in turn_text) or any(t in turn_text for t in p_name.split() if len(t) > 3 and t not in {'with', 'than', 'compare', 'show', 'best', 'good'}):
+                    if prod not in products:
+                        products.append(prod)
+            if len(products) >= 2:
+                break
 
     if len(products) < 2:
-        products = all_prods[:3]
+        products = all_prods[:2]
 
     if len(products) < 2:
         if step:

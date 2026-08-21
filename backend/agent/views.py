@@ -36,7 +36,7 @@ class AgentBackgroundChatView(APIView):
         return Response({
             "status": "QUEUED_IN_BACKGROUND",
             "task_id": async_task.id,
-            "message": "Mitrai AI is researching across 24 direct brands and live marketplaces in the background via Celery. You will receive a notification when results are ready."
+            "message": "Mitrai AI is researching across integrated brand APIs and live marketplaces in the background via Celery. You will receive a notification when results are ready."
         }, status=status.HTTP_202_ACCEPTED)
 
 class AgentChatView(APIView):
@@ -53,13 +53,15 @@ class AgentChatView(APIView):
 
         history = request.data.get("history", [])
         cart_id = request.data.get("cart_id")
+        include_merchants = request.data.get("include_merchants", True)
         user_id = str(request.user.id) if request.user.is_authenticated else None
 
         result = CommerceAgentEngine.process_message(
             message=message,
             history=history,
             user_id=user_id,
-            cart_id=cart_id
+            cart_id=cart_id,
+            include_merchants=include_merchants
         )
 
         return Response(result, status=status.HTTP_200_OK)
@@ -77,30 +79,52 @@ class AgentStreamChatView(APIView):
         if not message:
             return Response({"error": "Message is required"}, status=status.HTTP_400_BAD_REQUEST)
 
+        history = request.data.get("history", [])
         cart_id = request.data.get("cart_id")
+        include_merchants = request.data.get("include_merchants", True)
         user_id = str(request.user.id) if request.user.is_authenticated else None
 
-        def event_stream():
-            tracer = AgentExecutionTracer()
+        import queue
+        import threading
 
-            # Yield initial connect event
+        event_queue = queue.Queue()
+
+        def on_step_callback(event_data):
+            event_queue.put(event_data)
+
+        def worker():
+            try:
+                tracer = AgentExecutionTracer(callback=on_step_callback)
+                result = CommerceAgentEngine.process_message(
+                    message=message,
+                    history=history,
+                    user_id=user_id,
+                    cart_id=cart_id,
+                    include_merchants=include_merchants,
+                    tracer=tracer
+                )
+                event_queue.put({"event": "FINAL_RESPONSE", "payload": result})
+            except Exception as e:
+                event_queue.put({"event": "ERROR", "error": str(e)})
+            finally:
+                event_queue.put(None)  # Sentinel to end stream
+
+        # Launch worker in background thread
+        t = threading.Thread(target=worker)
+        t.start()
+
+        def event_stream():
             yield f"data: {json.dumps({'event': 'CONNECTED', 'message': 'Agent initialized'})}\n\n"
 
-            # Execute with active tracer
-            result = CommerceAgentEngine.process_message(
-                message=message,
-                user_id=user_id,
-                cart_id=cart_id,
-                tracer=tracer
-            )
+            while True:
+                try:
+                    item = event_queue.get(timeout=35)
+                    if item is None:
+                        break
+                    yield f"data: {json.dumps(item)}\n\n"
+                except queue.Empty:
+                    break
 
-            # Stream each executed step
-            for step in result.get("steps", []):
-                yield f"data: {json.dumps({'event': 'STEP_UPDATE', 'step': step})}\n\n"
-                time.sleep(0.05)
-
-            # Stream final payload
-            yield f"data: {json.dumps({'event': 'FINAL_RESPONSE', 'payload': result})}\n\n"
             yield "data: [DONE]\n\n"
 
         response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")

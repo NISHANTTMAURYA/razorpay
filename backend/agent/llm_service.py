@@ -39,22 +39,25 @@ class GeminiAgentService:
             genai.configure(api_key=self.api_key)
 
             candidate_models = [
+                "gemini-3.6-flash",
                 "gemini-2.5-flash",
+                "gemini-3.1-pro-preview",
                 "gemini-flash-latest",
-                "gemini-2.5-pro",
                 "gemini-pro-latest",
             ]
-
+            self._models = []
             for model_name in candidate_models:
                 try:
-                    self._model = genai.GenerativeModel(
+                    m = genai.GenerativeModel(
                         model_name=model_name,
                         system_instruction=MITRAI_SYSTEM_PROMPT
                     )
-                    logger.info(f"Successfully initialized Gemini model: {model_name}")
-                    break
+                    self._models.append(m)
                 except Exception:
                     continue
+            if self._models:
+                self._model = self._models[0]
+                logger.info(f"Initialized {len(self._models)} Gemini models for failover")
         except Exception as e:
             logger.warning(f"Could not initialize Gemini model: {e}")
 
@@ -64,39 +67,43 @@ class GeminiAgentService:
         history: Optional[List[Dict[str, str]]] = None,
         context: Optional[Dict[str, Any]] = None
     ) -> Optional[str]:
-        if not self._model:
+        if not getattr(self, '_models', None):
             self._initialize_model()
 
-        if not self._model:
+        if not getattr(self, '_models', None):
             return None
 
-        try:
-            conversation_context = ""
-            if history:
-                conversation_context = "=== CONVERSATION HISTORY ===\n"
-                for turn in history[-6:]:
-                    role = turn.get("role", "user")
-                    content = turn.get("content", "")
-                    conversation_context += f"{role.upper()}: {content}\n"
-                conversation_context += "============================\n\n"
+        conversation_context = ""
+        if history:
+            conversation_context = "=== CONVERSATION HISTORY ===\n"
+            for turn in history[-6:]:
+                role = turn.get("role", "user")
+                content = turn.get("content", "")
+                conversation_context += f"{role.upper()}: {content}\n"
+            conversation_context += "============================\n\n"
 
-            grounded_context = ""
-            if context:
-                grounded_context = f"Grounded Context / Database Products: {context}\n\n"
+        grounded_context = ""
+        if context:
+            grounded_context = f"Grounded Context / Database Products: {context}\n\n"
 
-            full_prompt = f"{conversation_context}{grounded_context}USER: {prompt}\nASSISTANT:"
+        full_prompt = f"{conversation_context}{grounded_context}USER: {prompt}\nASSISTANT:"
 
-            response = self._model.generate_content(
-                full_prompt,
-                generation_config={
-                    "temperature": 0.7,
-                    "max_output_tokens": 600,
-                }
-            )
-            if response and response.text:
-                return response.text.strip()
-        except Exception as e:
-            logger.warning(f"Gemini generation error: {e}")
+        # Try models in order; if 429 or quota exceeded, failover to next model
+        for model in self._models:
+            try:
+                response = model.generate_content(
+                    full_prompt,
+                    generation_config={
+                        "temperature": 0.7,
+                        "max_output_tokens": 700,
+                    }
+                )
+                if response and response.text:
+                    return response.text.strip()
+            except Exception as e:
+                logger.warning(f"Model generation error on {getattr(model, 'model_name', 'model')}: {e}")
+                continue
+
         return None
 
 # Singleton instance

@@ -35,6 +35,8 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
   // Active Session & Message State
   ChatSession? _currentSession;
   final List<Map<String, dynamic>> _messages = [];
+  final List<Map<String, dynamic>> _liveRunningSteps = [];
+  bool _includeMerchants = true;
 
   @override
   void initState() {
@@ -150,6 +152,9 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
 
+    // Immediately dismiss keyboard on submit
+    FocusScope.of(context).unfocus();
+
     if (_currentSession == null) {
       _startNewChat(autoSave: false);
     }
@@ -161,6 +166,7 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
         'products': <Map<String, dynamic>>[],
         'steps': <Map<String, dynamic>>[],
       });
+      _liveRunningSteps.clear();
       _isLoading = true;
     });
 
@@ -170,47 +176,76 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     await _saveCurrentSession();
 
     final currentHistory = _history;
-    final sessionId = _currentSession?.id;
 
     // Trigger Celery background research so the response is computed and creates a notification
-    // even if the user exits the app or closes the screen!
     ApiService().sendBackgroundChatMessage(
       message: text,
       history: currentHistory.map((h) => Map<String, dynamic>.from(h)).toList(),
       cartId: cartId,
+      includeMerchants: _includeMerchants,
     );
 
-    final response = await ApiService().sendAgentMessage(
+    final response = await ApiService().streamAgentMessage(
       message: text,
       history: currentHistory,
-      conversationId: sessionId,
       cartId: cartId,
+      includeMerchants: _includeMerchants,
+      onStepUpdate: (step) {
+        if (mounted) {
+          setState(() {
+            final idx = _liveRunningSteps.indexWhere((s) => s['step_name'] == step['step_name']);
+            if (idx >= 0) {
+              _liveRunningSteps[idx] = step;
+            } else {
+              _liveRunningSteps.add(step);
+            }
+          });
+          _scrollToBottom();
+        }
+      },
     );
 
     final respText = (response['response'] ?? response['message'] ?? '').toString().trim();
     final effectiveText = respText.isEmpty ? 'There is an error right now. Please chat later.' : respText;
 
-    final botMessage = {
+    // Check for intermediate preview response (e.g. preliminary merchant discovery list before final products)
+    final intermediateText = (response['intermediate_response'] ?? '').toString().trim();
+    final List<Map<String, dynamic>> newBotMessages = [];
+
+    if (intermediateText.isNotEmpty && intermediateText != effectiveText) {
+      newBotMessages.add({
+        'isUser': false,
+        'text': intermediateText,
+        'isIntermediate': true,
+        'products': <Map<String, dynamic>>[],
+        'comparison': null,
+        'cart': null,
+        'steps': <Map<String, dynamic>>[],
+        'actions': <Map<String, dynamic>>[],
+      });
+    }
+
+    newBotMessages.add({
       'isUser': false,
       'text': effectiveText,
       'products': List<Map<String, dynamic>>.from(response['products'] ?? []),
       'comparison': response['comparison'],
       'cart': response['cart'],
-      'steps': List<Map<String, dynamic>>.from(response['steps'] ?? []),
+      'steps': List<Map<String, dynamic>>.from(response['steps'] ?? (_liveRunningSteps.isNotEmpty ? _liveRunningSteps : [])),
       'actions': List<Map<String, dynamic>>.from(response['suggested_actions'] ?? []),
-    };
+    });
 
     if (mounted) {
       setState(() {
         _isLoading = false;
-        _messages.add(botMessage);
+        _messages.addAll(newBotMessages);
       });
       _scrollToBottom();
       await _saveCurrentSession();
     } else {
       // User navigated away: persist message directly to disk storage
       if (_currentSession != null) {
-        _currentSession!.messages.add(botMessage);
+        _currentSession!.messages.addAll(newBotMessages);
         _currentSession!.updatedAt = DateTime.now();
         await ChatStorageService().saveSession(_currentSession!);
       }
@@ -492,6 +527,87 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
             ),
           ),
         ),
+        // Direct Brand Merchant Products Toggle Bar
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Toggle Button
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _includeMerchants = !_includeMerchants;
+                  });
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        _includeMerchants
+                            ? '🛍️ Direct Brand Stores: ENABLED (Xiaomi, OnePlus, Samsung, boAt, etc.)'
+                            : '🌐 Direct Brand Stores: DISABLED (Searching External Marketplaces Only)',
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                      ),
+                      backgroundColor: _includeMerchants ? BrikTheme.brandNavy : const Color(0xFFE65100),
+                      duration: const Duration(seconds: 2),
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _includeMerchants ? BrikTheme.cardSurface : const Color(0xFF2B1400),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: _includeMerchants ? BrikTheme.cardBorder : const Color(0xFFFF9800),
+                      width: 1.2,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _includeMerchants ? Icons.storefront_rounded : Icons.storefront_outlined,
+                        size: 13,
+                        color: _includeMerchants ? const Color(0xFF64B5F6) : const Color(0xFFFFB74D),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        _includeMerchants ? 'Direct Brands: ON' : 'Direct Brands: OFF',
+                        style: TextStyle(
+                          color: _includeMerchants ? Colors.white : const Color(0xFFFFB74D),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _includeMerchants ? const Color(0xFF00E676) : const Color(0xFFFF5252),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              // Filter State Indicator
+              Text(
+                _includeMerchants ? 'Direct Brands + Web Marketplaces' : 'External Stores Only (Amazon, Flipkart)',
+                style: const TextStyle(
+                  color: BrikTheme.textSecondaryOnDark,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
 
         // Message List / Empty State
         Expanded(
@@ -565,7 +681,7 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const CircularLogo(size: 64),
+            const BrandMark(size: 72),
             const SizedBox(height: 24),
             Wrap(
               spacing: 8,
@@ -607,37 +723,7 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
   }
 
   Widget _buildAgentReasoningBubble() {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: BrikTheme.cardSurface,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: BrikTheme.cardBorder),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2, color: BrikTheme.brandNavy),
-            ),
-            SizedBox(width: 10),
-            Text(
-              'Mitrai agent reasoning...',
-              style: TextStyle(
-                color: BrikTheme.textSecondaryOnDark,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return _LiveAgentProgressBubble(liveSteps: _liveRunningSteps);
   }
 
   Widget _buildMessageBubble(Map<String, dynamic> msg) {
@@ -680,10 +766,10 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Optional Real Execution Steps Pill
-            if (steps.isNotEmpty) _buildRealStepsTrace(steps),
+            // 1. Interactive Expandable Real Execution Tool Trace
+            if (steps.isNotEmpty) _ExpandableStepsTraceCard(steps: steps),
 
-            // 2. Main Response Text Bubble
+            // 2. Main Response Text Bubble with clickable Markdown links
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -693,6 +779,24 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
               ),
               child: MarkdownBody(
                 data: text,
+                selectable: false,
+                onTapLink: (text, href, title) async {
+                  if (href != null && href.trim().isNotEmpty) {
+                    var uriStr = href.trim();
+                    if (!uriStr.startsWith('http://') && !uriStr.startsWith('https://')) {
+                      uriStr = 'https://$uriStr';
+                    }
+                    try {
+                      final uri = Uri.parse(uriStr);
+                      final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      if (!launched) {
+                        await launchUrl(uri, mode: LaunchMode.platformDefault);
+                      }
+                    } catch (e) {
+                      debugPrint('Could not launch url: $e');
+                    }
+                  }
+                },
                 styleSheet: MarkdownStyleSheet(
                   p: const TextStyle(
                     color: Colors.white,
@@ -707,6 +811,11 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
                   em: const TextStyle(
                     color: BrikTheme.brandNavy,
                     fontStyle: FontStyle.italic,
+                  ),
+                  a: const TextStyle(
+                    color: Color(0xFF90CAF9),
+                    fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.underline,
                   ),
                   h1: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
                   h2: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 16),
@@ -753,6 +862,16 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
                     final label = act['label']?.toString() ?? 'Action';
                     return GestureDetector(
                       onTap: () {
+                        if (act['action'] == 'TOGGLE_MERCHANTS_OFF') {
+                          setState(() {
+                            _includeMerchants = false;
+                          });
+                        } else if (act['action'] == 'TOGGLE_MERCHANTS_ON') {
+                          setState(() {
+                            _includeMerchants = true;
+                          });
+                        }
+
                         if (act['action'] == 'ADD_TO_CART') {
                           final pid = act['payload']?['product_id'] ?? 1;
                           _handleAddToCart(pid is int ? pid : int.tryParse(pid.toString()) ?? 1);
@@ -782,38 +901,6 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
                   }).toList(),
                 ),
               ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRealStepsTrace(List<Map<String, dynamic>> steps) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: BrikTheme.cardSurfaceSecondary,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.bolt_rounded, color: BrikTheme.brandNavy, size: 14),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                '${steps.length} Steps: ${steps.map((s) => s['step_name'] ?? 'Step').join(' → ')}',
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
-                style: const TextStyle(
-                  color: BrikTheme.textSecondaryOnDark,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
           ],
         ),
       ),
@@ -983,9 +1070,18 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
                 if (!isPlatform && externalUrl.isNotEmpty) ...[
                   GestureDetector(
                     onTap: () async {
-                      final uri = Uri.parse(externalUrl);
-                      if (await canLaunchUrl(uri)) {
-                        await launchUrl(uri, mode: LaunchMode.externalApplication);
+                      var uriStr = externalUrl.trim();
+                      if (!uriStr.startsWith('http://') && !uriStr.startsWith('https://')) {
+                        uriStr = 'https://$uriStr';
+                      }
+                      try {
+                        final uri = Uri.parse(uriStr);
+                        final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+                        if (!launched) {
+                          await launchUrl(uri, mode: LaunchMode.platformDefault);
+                        }
+                      } catch (e) {
+                        debugPrint('Could not launch url: $e');
                       }
                     },
                     child: Container(
@@ -1023,3 +1119,425 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live Animated Agent Progress Bubble
+// ─────────────────────────────────────────────────────────────────────────────
+class _LiveAgentProgressBubble extends StatefulWidget {
+  final List<Map<String, dynamic>> liveSteps;
+
+  const _LiveAgentProgressBubble({this.liveSteps = const []});
+
+  @override
+  State<_LiveAgentProgressBubble> createState() => _LiveAgentProgressBubbleState();
+}
+
+class _LiveAgentProgressBubbleState extends State<_LiveAgentProgressBubble> {
+  int _currentStage = 0;
+  static const List<Map<String, String>> _stages = [
+    {
+      'icon': '🔍',
+      'title': 'Querying Merchant APIs',
+      'subtitle': 'Connecting to integrated brand catalog endpoints...',
+    },
+    {
+      'icon': '🌐',
+      'title': 'Scraping Live Marketplaces',
+      'subtitle': 'Checking real-time prices across external stores...',
+    },
+    {
+      'icon': '💬',
+      'title': 'Mining Community Discussions',
+      'subtitle': 'Searching Reddit threads & buyer forums via Tavily...',
+    },
+    {
+      'icon': '📺',
+      'title': 'Analyzing Video & Web Reviews',
+      'subtitle': 'Extracting reviewer consensus via live web search...',
+    },
+    {
+      'icon': '⚡',
+      'title': 'Assembling Grounded Recommendation',
+      'subtitle': 'Synthesizing specs, trade-offs & verified source links...',
+    },
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _startCycle();
+  }
+
+  void _startCycle() async {
+    while (mounted) {
+      await Future.delayed(const Duration(milliseconds: 1400));
+      if (mounted && widget.liveSteps.isEmpty) {
+        setState(() {
+          _currentStage = (_currentStage + 1) % _stages.length;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // If real backend steps are streaming via SSE, show the real active tool!
+    if (widget.liveSteps.isNotEmpty) {
+      final latestStep = widget.liveSteps.last;
+      final stepName = latestStep['step_name']?.toString() ?? 'Executing Agent Tool';
+      final desc = latestStep['description']?.toString() ?? 'Processing live reasoning node...';
+      final tool = latestStep['tool_name']?.toString();
+
+      String icon = '⚡';
+      if (tool == 'search_merchant_gateway') {
+        icon = '🔍';
+      } else if (tool == 'search_all_external_marketplaces') {
+        icon = '🌐';
+      } else if (tool == 'analyze_product_reviews') {
+        icon = '💬';
+      } else if (tool == 'gemini_grounded_synthesis') {
+        icon = '🧠';
+      }
+
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 14),
+          constraints: const BoxConstraints(maxWidth: 380),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: BrikTheme.cardSurface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: BrikTheme.cardBorder, width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: BrikTheme.brandNavy.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: BrikTheme.brandNavy,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    icon,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      stepName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: BrikTheme.brandNavy,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Tool ${widget.liveSteps.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Padding(
+                padding: const EdgeInsets.only(left: 30),
+                child: Text(
+                  desc,
+                  style: const TextStyle(
+                    color: BrikTheme.textSecondaryOnDark,
+                    fontSize: 11,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final stage = _stages[_currentStage];
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        constraints: const BoxConstraints(maxWidth: 380),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: BrikTheme.cardSurface,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: BrikTheme.cardBorder, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: BrikTheme.brandNavy.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: BrikTheme.brandNavy,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  stage['icon']!,
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    stage['title']!,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${_currentStage + 1}/${_stages.length}',
+                  style: const TextStyle(
+                    color: BrikTheme.textSecondaryOnDark,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.only(left: 30),
+              child: Text(
+                stage['subtitle']!,
+                style: const TextStyle(
+                  color: BrikTheme.textSecondaryOnDark,
+                  fontSize: 11,
+                  height: 1.2,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Interactive Expandable Tool Execution Trace Card
+// ─────────────────────────────────────────────────────────────────────────────
+class _ExpandableStepsTraceCard extends StatefulWidget {
+  final List<Map<String, dynamic>> steps;
+
+  const _ExpandableStepsTraceCard({required this.steps});
+
+  @override
+  State<_ExpandableStepsTraceCard> createState() => _ExpandableStepsTraceCardState();
+}
+
+class _ExpandableStepsTraceCardState extends State<_ExpandableStepsTraceCard> {
+  bool _isExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: BrikTheme.cardSurfaceSecondary,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: BrikTheme.cardBorder),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _isExpanded = !_isExpanded;
+                });
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                color: Colors.transparent,
+                child: Row(
+                  children: [
+                    const Icon(Icons.bolt_rounded, color: BrikTheme.brandNavy, size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '⚡ Agent Reasoning & Tool Trace (${widget.steps.length} tools executed)',
+                        style: const TextStyle(
+                          color: BrikTheme.brandNavy,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      _isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                      color: BrikTheme.brandNavy,
+                      size: 18,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_isExpanded) ...[
+              const Divider(height: 1, color: BrikTheme.cardBorder),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  children: widget.steps.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final step = entry.value;
+                    final name = step['step_name']?.toString() ?? 'Agent Step';
+                    final desc = step['description']?.toString() ?? '';
+                    final tool = step['tool_name']?.toString();
+                    final durationMs = step['duration_ms'] ?? 85;
+
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: index == widget.steps.length - 1 ? 0 : 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 20,
+                            height: 20,
+                            decoration: const BoxDecoration(
+                              color: BrikTheme.brandNavy,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                '${index + 1}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        name,
+                                        style: const TextStyle(
+                                          color: BrikTheme.brandNavy,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    if (tool != null)
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(alpha: 0.5),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          tool,
+                                          style: const TextStyle(
+                                            color: BrikTheme.brandNavy,
+                                            fontSize: 9.5,
+                                            fontFamily: 'monospace',
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      '${durationMs}ms',
+                                      style: const TextStyle(
+                                        color: BrikTheme.textSecondaryOnDark,
+                                        fontSize: 9.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (desc.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    desc,
+                                    style: const TextStyle(
+                                      color: BrikTheme.textSecondaryOnDark,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+

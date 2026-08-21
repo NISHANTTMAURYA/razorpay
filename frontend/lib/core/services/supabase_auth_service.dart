@@ -15,7 +15,9 @@ class SupabaseAuthService {
   // In-memory & persisted demo user state for guest mode or offline exploration
   User? _mockUser;
   bool _isGuest = false;
+  String? _storedUserId;
   String? _storedUserName;
+  String? _storedUserEmail;
   String? _storedAvatarUrl;
 
   bool get isAuthenticated => currentUser != null;
@@ -31,37 +33,58 @@ class SupabaseAuthService {
     return null;
   }
 
-  String get userId => currentUser?.id ?? 'user_shopper_01';
-  String get userEmail => currentUser?.email ?? 'shopper@mitrai.ai';
+  String get userId => currentUser?.id ?? _storedUserId ?? 'user_shopper_01';
+
+  String get userEmail {
+    if (_storedUserEmail != null && _storedUserEmail!.trim().isNotEmpty && _storedUserEmail != 'shopper@mitrai.ai') {
+      return _storedUserEmail!.trim();
+    }
+    if (_mockUser != null && _mockUser!.email != null && _mockUser!.email!.isNotEmpty && _mockUser!.email != 'shopper@mitrai.ai') {
+      return _mockUser!.email!.trim();
+    }
+    if (_isInitialized && Supabase.instance.client.auth.currentUser?.email != null) {
+      final e = Supabase.instance.client.auth.currentUser!.email!;
+      if (e.isNotEmpty && e != 'shopper@mitrai.ai') return e;
+    }
+    return _storedUserEmail?.trim() ?? 'shopper@mitrai.ai';
+  }
+
   String get userPhone => '+919876543210';
   
   String get userName {
+    if (_storedUserName != null &&
+        _storedUserName!.trim().isNotEmpty &&
+        _storedUserName != 'Shopper' &&
+        _storedUserName != 'Google Shopper' &&
+        _storedUserName != 'Mitrai Shopper') {
+      return _storedUserName!.trim();
+    }
+    if (_mockUser != null && _mockUser!.userMetadata != null) {
+      final meta = _mockUser!.userMetadata!;
+      if (meta['full_name'] != null && meta['full_name'].toString().trim().isNotEmpty && meta['full_name'].toString() != 'Mitrai Shopper') {
+        return meta['full_name'].toString().trim();
+      }
+      if (meta['name'] != null && meta['name'].toString().trim().isNotEmpty) {
+        return meta['name'].toString().trim();
+      }
+    }
     if (_isInitialized && Supabase.instance.client.auth.currentUser != null) {
       final user = Supabase.instance.client.auth.currentUser!;
       final meta = user.userMetadata;
       if (meta != null) {
-        if (meta['full_name'] != null && meta['full_name'].toString().trim().isNotEmpty) {
+        if (meta['full_name'] != null && meta['full_name'].toString().trim().isNotEmpty && meta['full_name'].toString() != 'Mitrai Shopper') {
           return meta['full_name'].toString().trim();
         }
         if (meta['name'] != null && meta['name'].toString().trim().isNotEmpty) {
           return meta['name'].toString().trim();
         }
       }
-      if (user.email != null && user.email!.isNotEmpty) {
+      if (user.email != null && user.email!.isNotEmpty && user.email != 'shopper@mitrai.ai') {
         final part = user.email!.split('@').first;
         return part[0].toUpperCase() + part.substring(1);
       }
     }
-    if (_mockUser != null && _mockUser!.userMetadata != null) {
-      final meta = _mockUser!.userMetadata!;
-      if (meta['full_name'] != null && meta['full_name'].toString().trim().isNotEmpty) {
-        return meta['full_name'].toString().trim();
-      }
-    }
-    if (_storedUserName != null && _storedUserName!.trim().isNotEmpty && _storedUserName != 'Shopper' && _storedUserName != 'Google Shopper') {
-      return _storedUserName!.trim();
-    }
-    return 'Mitrai Shopper';
+    return _storedUserName?.trim() ?? 'Mitrai Shopper';
   }
 
   String? get avatarUrl {
@@ -98,6 +121,7 @@ class SupabaseAuthService {
 
       _isGuest = prefs.getBool('is_guest_mode') ?? false;
       _storedUserName = prefs.getString('user_name');
+      _storedUserEmail = prefs.getString('user_email');
       _storedAvatarUrl = prefs.getString('avatar_url');
       final savedLogin = prefs.getBool('is_logged_in') ?? false;
       if (savedLogin) {
@@ -107,6 +131,9 @@ class SupabaseAuthService {
         final avatar = prefs.getString('avatar_url') ?? '';
         final isGuest = prefs.getBool('is_guest') ?? true;
         _isGuest = isGuest;
+        _storedUserName = name;
+        _storedUserEmail = email;
+        _storedAvatarUrl = avatar.isNotEmpty ? avatar : null;
         _mockUser = User(
           id: id,
           appMetadata: {},
@@ -172,6 +199,7 @@ class SupabaseAuthService {
       final realAvatar = googleUser.photoUrl?.trim();
 
       _storedUserName = realName;
+      _storedUserEmail = realEmail;
       _storedAvatarUrl = realAvatar;
       _mockUser = User(
         id: 'google_${googleUser.id}',
@@ -335,6 +363,7 @@ class SupabaseAuthService {
   }) async {
     _isGuest = false;
     _storedUserName = name.trim();
+    _storedUserEmail = email.trim();
     _storedAvatarUrl = avatarUrl?.trim();
     final cleanEmail = email.trim();
     final generatedId = 'user_${cleanEmail.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}';
@@ -372,6 +401,7 @@ class SupabaseAuthService {
   }) async {
     _isGuest = true;
     _storedUserName = name;
+    _storedUserEmail = email;
     _storedAvatarUrl = null;
     _mockUser = User(
       id: 'guest_user_${DateTime.now().millisecondsSinceEpoch}',
@@ -403,11 +433,20 @@ class SupabaseAuthService {
     _mockUser = null;
     _isGuest = false;
     _storedUserName = null;
+    _storedUserEmail = null;
     _storedAvatarUrl = null;
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
+      // Clear ONLY auth session credentials — preserve chat history & user sessions!
+      await prefs.remove('is_logged_in');
+      await prefs.remove('is_guest');
+      await prefs.remove('user_name');
+      await prefs.remove('user_email');
+      await prefs.remove('avatar_url');
+      await prefs.remove('user_id');
+      await prefs.remove('access_token');
+      await prefs.remove('refresh_token');
     } catch (_) {}
   }
 }

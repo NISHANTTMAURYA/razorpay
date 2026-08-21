@@ -52,12 +52,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
       address = prefs.getString('pref_delivery_address') ?? '';
       phone = prefs.getString('pref_phone_number') ?? '';
       notifs = prefs.getBool('pref_notifications_enabled') ?? false;
+
       final savedName = prefs.getString('user_name');
-      if (savedName != null && savedName.trim().isNotEmpty && savedName != 'Shopper') {
+      if (savedName != null &&
+          savedName.trim().isNotEmpty &&
+          savedName != 'Shopper' &&
+          savedName != 'Google Shopper' &&
+          savedName != 'Mitrai Shopper' &&
+          savedName != 'Mitrai Explorer') {
         name = savedName.trim();
       }
       final savedEmail = prefs.getString('user_email');
-      if (savedEmail != null && savedEmail.trim().isNotEmpty) {
+      if (savedEmail != null &&
+          savedEmail.trim().isNotEmpty &&
+          savedEmail != 'shopper@mitrai.ai') {
         email = savedEmail.trim();
       }
       final savedAvatar = prefs.getString('avatar_url');
@@ -67,28 +75,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } catch (_) {}
 
     // 2. Fetch backend profile to sync if available
-    final backendProfile = await ApiService().getUserProfile();
-    if (backendProfile != null) {
-      final prof = backendProfile['user'] is Map ? backendProfile['user'] : backendProfile;
-      if (prof['delivery_address'] != null && prof['delivery_address'].toString().trim().isNotEmpty) {
-        address = prof['delivery_address'].toString().trim();
+    try {
+      final backendProfile = await ApiService().getUserProfile();
+      if (backendProfile != null) {
+        final prof = backendProfile['user'] is Map ? backendProfile['user'] : backendProfile;
+        if (prof['delivery_address'] != null && prof['delivery_address'].toString().trim().isNotEmpty) {
+          address = prof['delivery_address'].toString().trim();
+        }
+        if (prof['phone'] != null && prof['phone'].toString().trim().isNotEmpty) {
+          phone = prof['phone'].toString().trim();
+        }
+
+        final backendName = prof['full_name']?.toString().trim();
+        if ((name == 'Mitrai Shopper' || name == 'Shopper' || name == 'Mitrai Explorer') &&
+            backendName != null &&
+            backendName.isNotEmpty &&
+            backendName != 'Mitrai Explorer' &&
+            backendName != 'Mitrai Shopper') {
+          name = backendName;
+        }
+
+        final backendEmail = prof['email']?.toString().trim();
+        if ((email == 'shopper@mitrai.ai' || email.isEmpty) &&
+            backendEmail != null &&
+            backendEmail.isNotEmpty &&
+            backendEmail != 'shopper@mitrai.ai') {
+          email = backendEmail;
+        }
+
+        if (prof['avatar_url'] != null && prof['avatar_url'].toString().trim().isNotEmpty) {
+          avatar = prof['avatar_url'].toString().trim();
+        }
+        if (prof['notifications_enabled'] != null) {
+          notifs = prof['notifications_enabled'] == true;
+        }
       }
-      if (prof['phone'] != null && prof['phone'].toString().trim().isNotEmpty) {
-        phone = prof['phone'].toString().trim();
-      }
-      if (prof['full_name'] != null && prof['full_name'].toString().trim().isNotEmpty && !prof['full_name'].toString().contains('Explorer')) {
-        name = prof['full_name'].toString().trim();
-      }
-      if (prof['email'] != null && prof['email'].toString().trim().isNotEmpty && prof['email'] != 'shopper@mitrai.ai') {
-        email = prof['email'].toString().trim();
-      }
-      if (prof['avatar_url'] != null && prof['avatar_url'].toString().trim().isNotEmpty) {
-        avatar = prof['avatar_url'].toString().trim();
-      }
-      if (prof['notifications_enabled'] != null) {
-        notifs = prof['notifications_enabled'] == true;
-      }
-    }
+    } catch (_) {}
 
     // 3. Fetch active watchers
     final watchersList = await ApiService().getWatchers();

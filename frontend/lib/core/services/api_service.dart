@@ -71,12 +71,73 @@ class ApiService {
     return [];
   }
 
-  // 2. Chat with Live LangGraph AI Agent
+  // 2. Chat with Live LangGraph AI Agent (Real SSE Streaming with fallback)
+  Future<Map<String, dynamic>> streamAgentMessage({
+    required String message,
+    List<Map<String, String>>? history,
+    String? cartId,
+    bool includeMerchants = true,
+    required void Function(Map<String, dynamic> step) onStepUpdate,
+  }) async {
+    try {
+      final client = http.Client();
+      final request = http.Request('POST', Uri.parse('${ApiConstants.baseUrl}/api/agent/stream/'))
+        ..headers.addAll(_headers)
+        ..body = jsonEncode({
+          'message': message,
+          'history': history ?? [],
+          'user_id': SupabaseAuthService().userId,
+          'cart_id': cartId,
+          'include_merchants': includeMerchants,
+        });
+
+      final response = await client.send(request);
+      if (response.statusCode == 200) {
+        Map<String, dynamic>? finalPayload;
+        await response.stream
+            .transform(utf8.decoder)
+            .transform(const LineSplitter())
+            .forEach((line) {
+          if (line.startsWith('data: ')) {
+            final dataStr = line.substring(6).trim();
+            if (dataStr == '[DONE]') return;
+            try {
+              final jsonEvent = jsonDecode(dataStr);
+              final eventType = jsonEvent['event'];
+              if (eventType == 'STEP_START' || eventType == 'STEP_COMPLETE' || eventType == 'STEP_UPDATE') {
+                if (jsonEvent['step'] != null) {
+                  onStepUpdate(Map<String, dynamic>.from(jsonEvent['step']));
+                }
+              } else if (eventType == 'FINAL_RESPONSE') {
+                finalPayload = Map<String, dynamic>.from(jsonEvent['payload'] ?? {});
+              }
+            } catch (_) {}
+          }
+        });
+
+        if (finalPayload != null) {
+          return finalPayload!;
+        }
+      }
+    } catch (e) {
+      debugPrint('StreamAgent API Error: $e');
+    }
+
+    // Fallback to standard request if streaming connection drops
+    return await sendAgentMessage(
+      message: message,
+      history: history,
+      cartId: cartId,
+      includeMerchants: includeMerchants,
+    );
+  }
+
   Future<Map<String, dynamic>> sendAgentMessage({
     required String message,
     List<Map<String, String>>? history,
     String? conversationId,
     String? cartId,
+    bool includeMerchants = true,
   }) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/agent/chat/');
@@ -88,6 +149,7 @@ class ApiService {
           'conversation_id': conversationId ?? 'conv_mitrai_active',
           'user_id': SupabaseAuthService().userId,
           'cart_id': cartId,
+          'include_merchants': includeMerchants,
         }),
       );
 
@@ -112,6 +174,7 @@ class ApiService {
     required String message,
     List<Map<String, dynamic>>? history,
     String? cartId,
+    bool includeMerchants = true,
   }) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/agent/background-chat/');
@@ -122,6 +185,7 @@ class ApiService {
           'history': history ?? [],
           'user_id': SupabaseAuthService().userId,
           'cart_id': cartId,
+          'include_merchants': includeMerchants,
         }),
       );
 

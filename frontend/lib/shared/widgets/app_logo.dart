@@ -48,6 +48,34 @@ class AppLogo extends StatelessWidget {
   }
 }
 
+/// Standalone Mitrai Brand Mark using new2.svg (no circular frame)
+class BrandMark extends StatelessWidget {
+  final double size;
+  final BoxFit fit;
+
+  const BrandMark({
+    super.key,
+    this.size = 64.0,
+    this.fit = BoxFit.contain,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SvgPicture.asset(
+      'assets/images/new2.svg',
+      width: size,
+      height: size,
+      fit: fit,
+      placeholderBuilder: (context) => Center(
+        child: Text(
+          '⚡',
+          style: TextStyle(fontSize: size * 0.5),
+        ),
+      ),
+    );
+  }
+}
+
 /// Circular Mitrai Accessibility & Brand Logo using new2.svg
 class CircularLogo extends StatelessWidget {
   final double size;
