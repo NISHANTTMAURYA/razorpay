@@ -21,10 +21,21 @@ class FloatingShoppingCopilotSheet extends StatelessWidget {
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      enableDrag: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => FloatingShoppingCopilotSheet(
-        detectedPackage: detectedPackage,
-        detectedContext: detectedContext,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.92,
+        minChildSize: 0.3,
+        maxChildSize: 0.95,
+        expand: false,
+        snap: true,
+        snapSizes: const [0.5, 0.92],
+        builder: (context, scrollController) {
+          return FloatingShoppingCopilotSheet(
+            detectedPackage: detectedPackage,
+            detectedContext: detectedContext,
+          );
+        },
       ),
     );
   }
@@ -52,24 +63,38 @@ class FloatingShoppingCopilotSheet extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // Drag Handle — prominent and centered for swipe-to-dismiss
+          GestureDetector(
+            onVerticalDragEnd: (details) {
+              if (details.primaryVelocity != null && details.primaryVelocity! > 300) {
+                Navigator.pop(context);
+              }
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.only(top: 12, bottom: 8),
+              child: Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: BrikTheme.brandNavy.withValues(alpha: 0.25),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
           // Header Bar
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 14, 6),
+            padding: const EdgeInsets.fromLTRB(20, 2, 14, 6),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Expanded(
                   child: Row(
                     children: [
-                      Container(
-                        width: 28,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: BrikTheme.brandNavy.withValues(alpha: 0.3),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
                       Flexible(
                         child: Text(
                           '⚡ MITRAI OVERLAY · ${_formatAppName(detectedPackage).toUpperCase()}',

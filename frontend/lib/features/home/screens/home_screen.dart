@@ -144,6 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
             context.read<CartProvider>().loadCart();
           },
           onSettingsPressed: _openSettings,
+          onMyOrdersPressed: _openMyOrders,
         );
       default:
         return _buildDashboardTab();
@@ -427,9 +428,9 @@ class _HomeScreenState extends State<HomeScreen> {
                                     builder: (context) => ProductDetailSheet(
                                       product: topProduct,
                                       onAddToCart: () {
-                                        final pid = topProduct['id'];
-                                        final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
-                                        context.read<CartProvider>().addItem(prodId);
+                                        final prodId = topProduct['id'] ?? 1;
+                                        final prodName = topProduct['name']?.toString();
+                                        context.read<CartProvider>().addItem(prodId, productName: prodName);
                                       },
                                     ),
                                   );
@@ -1023,9 +1024,9 @@ class _HomeScreenState extends State<HomeScreen> {
           builder: (context) => ProductDetailSheet(
             product: product,
             onAddToCart: () {
-              final pid = product['id'];
-              final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
-              context.read<CartProvider>().addItem(prodId);
+              final prodId = product['id'] ?? 1;
+              final prodName = product['name']?.toString();
+              context.read<CartProvider>().addItem(prodId, productName: prodName);
             },
           ),
         );
@@ -1150,9 +1151,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 8),
                       GestureDetector(
                         onTap: () {
-                          final pid = product['id'];
-                          final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
-                          context.read<CartProvider>().addItem(prodId);
+                          final prodId = product['id'] ?? 1;
+                          final prodName = product['name']?.toString() ?? title;
+                          context.read<CartProvider>().addItem(prodId, productName: prodName);
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
                               backgroundColor: BrikTheme.cardSurface,

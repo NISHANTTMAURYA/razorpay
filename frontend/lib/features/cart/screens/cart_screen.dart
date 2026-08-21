@@ -2,22 +2,39 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/theme/brik_theme.dart';
 import '../../../core/providers/cart_provider.dart';
+import '../../../core/motion/luxury_page_transitions.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
 import '../../../shared/widgets/brik_header_card.dart';
 import '../../../shared/widgets/pill_badge.dart';
 import '../../checkout/screens/checkout_sheet.dart';
 import '../../orders/screens/order_tracking_screen.dart';
+import '../../orders/screens/my_orders_screen.dart';
 
 class CartScreen extends StatelessWidget {
   final VoidCallback? onCheckoutComplete;
   final VoidCallback? onSettingsPressed;
+  final VoidCallback? onMyOrdersPressed;
 
   const CartScreen({
     super.key,
     this.onCheckoutComplete,
     this.onSettingsPressed,
+    this.onMyOrdersPressed,
   });
+
+  void _openMyOrders(BuildContext context) {
+    if (onMyOrdersPressed != null) {
+      onMyOrdersPressed!();
+    } else {
+      Navigator.push(
+        context,
+        SpatialPageRoute(
+          page: MyOrdersScreen(),
+        ),
+      );
+    }
+  }
 
   void _openCheckout(BuildContext context, Map<String, dynamic> cart) {
     showModalBottomSheet(
@@ -62,6 +79,7 @@ class CartScreen extends StatelessWidget {
             tagText: '${items.length} ITEMS IN CART',
             margin: const EdgeInsets.only(bottom: 10),
             onSettingsPressed: onSettingsPressed,
+            onOrdersPressed: () => _openMyOrders(context),
           ),
 
           if (cartProvider.isLoading && items.isEmpty)
@@ -69,21 +87,49 @@ class CartScreen extends StatelessWidget {
           else if (items.isEmpty)
             Expanded(
               child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Icon(Icons.shopping_bag_outlined, size: 64, color: BrikTheme.brandNavy),
-                    SizedBox(height: 16),
-                    Text(
-                      'Your cart is empty',
-                      style: TextStyle(color: BrikTheme.brandNavy, fontSize: 18, fontWeight: FontWeight.w700),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'Ask the AI Agent to discover products or browse the catalog.',
-                      style: TextStyle(color: BrikTheme.textSecondaryOnDark),
-                    ),
-                  ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          color: BrikTheme.cardSurface,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: BrikTheme.brandNavy.withValues(alpha: 0.15),
+                              blurRadius: 16,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: const Center(
+                          child: Icon(Icons.shopping_bag_outlined, size: 40, color: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Your cart is empty',
+                        style: TextStyle(color: BrikTheme.brandNavy, fontSize: 20, fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Discover curated products or track your previous orders.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 13),
+                      ),
+                      const SizedBox(height: 24),
+                      BrikButton(
+                        text: '📦 VIEW MY ORDERS',
+                        style: BrikButtonStyle.primaryLilac,
+                        isFullWidth: true,
+                        onPressed: () => _openMyOrders(context),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             )
@@ -91,6 +137,36 @@ class CartScreen extends StatelessWidget {
             Expanded(
               child: ListView(
                 children: [
+                  // Quick My Orders Banner
+                  GestureDetector(
+                    onTap: () => _openMyOrders(context),
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: BrikTheme.brandNavy,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        children: const [
+                          Icon(Icons.inventory_2_outlined, color: Colors.white, size: 16),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Track Active Deliveries & Past Orders',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 12),
+                        ],
+                      ),
+                    ),
+                  ),
+
                   // Shipping Address
                   BrikCard(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -127,97 +203,161 @@ class CartScreen extends StatelessWidget {
                   // Cart Item Cards
                   ...items.map((item) {
                     final prod = item['product'] as Map<String, dynamic>? ?? {};
-                    final pid = prod['id'] ?? item['id'] ?? 1;
-                    final prodId = pid is int ? pid : (int.tryParse(pid.toString()) ?? 1);
+                    final prodId = prod['id'] ?? item['id'] ?? 1;
                     final qty = (item['quantity'] as num?)?.toInt() ?? 1;
                     final unitPrice = double.tryParse(item['unit_price']?.toString() ?? '0') ?? 0;
                     final lineTotal = unitPrice * qty;
+                    final imagesList = prod['images'] as List?;
+                    final imageUrl = (imagesList != null && imagesList.isNotEmpty)
+                        ? imagesList.first.toString()
+                        : (prod['image_url']?.toString() ?? '');
+                    final prodName = prod['name']?.toString() ?? item['product_name']?.toString() ?? 'Product';
 
-                    return BrikCard(
-                      padding: const EdgeInsets.all(16),
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: Row(
-                        children: [
-                          // Product thumbnail
-                          Container(
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: BrikTheme.cardSurfaceSecondary,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: const Icon(Icons.headphones_rounded, color: Colors.white),
+                    return Dismissible(
+                      key: ValueKey('cart_item_$prodId'),
+                      direction: DismissDirection.endToStart,
+                      onDismissed: (_) {
+                        context.read<CartProvider>().removeItem(prodId);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: BrikTheme.brandNavy,
+                            behavior: SnackBarBehavior.floating,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            content: Text('Removed $prodName from bag', style: const TextStyle(color: Colors.white)),
+                            duration: const Duration(seconds: 2),
                           ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                        );
+                      },
+                      background: Container(
+                        margin: const EdgeInsets.only(bottom: 10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade700,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 24),
+                        child: const Icon(Icons.delete_rounded, color: Colors.white, size: 28),
+                      ),
+                      child: BrikCard(
+                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: Row(
+                          children: [
+                            // Product thumbnail with real image
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(14),
+                              child: SizedBox(
+                                width: 56,
+                                height: 56,
+                                child: imageUrl.isNotEmpty
+                                    ? Image.network(
+                                        imageUrl,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (context, error, stackTrace) => Container(
+                                          color: BrikTheme.cardSurfaceSecondary,
+                                          child: const Center(
+                                            child: Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 24),
+                                          ),
+                                        ),
+                                      )
+                                    : Container(
+                                        color: BrikTheme.cardSurfaceSecondary,
+                                        child: const Center(
+                                          child: Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 24),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    prodName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        '₹${unitPrice.toStringAsFixed(0)}',
+                                        style: const TextStyle(color: BrikTheme.brandNavy, fontSize: 13, fontWeight: FontWeight.w800),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      // Quantity Stepper
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: BrikTheme.brandNavy,
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            GestureDetector(
+                                              onTap: () {
+                                                if (qty > 1) {
+                                                  context.read<CartProvider>().updateItemQuantity(prodId, qty - 1);
+                                                } else {
+                                                  // qty is 1, remove it
+                                                  context.read<CartProvider>().removeItem(prodId);
+                                                }
+                                              },
+                                              child: Padding(
+                                                padding: const EdgeInsets.all(4),
+                                                child: Icon(
+                                                  qty <= 1 ? Icons.delete_outline_rounded : Icons.remove,
+                                                  color: Colors.white,
+                                                  size: 14,
+                                                ),
+                                              ),
+                                            ),
+                                            Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                                              child: Text(
+                                                '$qty',
+                                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13),
+                                              ),
+                                            ),
+                                            GestureDetector(
+                                              onTap: () {
+                                                context.read<CartProvider>().updateItemQuantity(prodId, qty + 1);
+                                              },
+                                              child: const Padding(
+                                                padding: EdgeInsets.all(4),
+                                                child: Icon(Icons.add, color: Colors.white, size: 14),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // Line total + delete
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Text(
-                                  prod['name']?.toString() ?? item['product_name']?.toString() ?? 'Product',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5),
+                                  '₹${lineTotal.toStringAsFixed(0)}',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
                                 ),
-                                const SizedBox(height: 6),
-                                Row(
-                                  children: [
-                                    Text(
-                                      '₹${unitPrice.toStringAsFixed(0)}',
-                                      style: const TextStyle(color: BrikTheme.brandNavy, fontSize: 13, fontWeight: FontWeight.w800),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    // Quantity Stepper (fully wired to CartProvider)
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: BrikTheme.brandNavy,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          GestureDetector(
-                                            onTap: () {
-                                              if (qty > 1) {
-                                                context.read<CartProvider>().updateItemQuantity(prodId, qty - 1);
-                                              }
-                                            },
-                                            child: const Padding(
-                                              padding: EdgeInsets.all(4),
-                                              child: Icon(Icons.remove, color: Colors.white, size: 14),
-                                            ),
-                                          ),
-                                          Padding(
-                                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                                            child: Text(
-                                              '$qty',
-                                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13),
-                                            ),
-                                          ),
-                                          GestureDetector(
-                                            onTap: () {
-                                              context.read<CartProvider>().addItem(prodId, quantity: 1);
-                                            },
-                                            child: const Padding(
-                                              padding: EdgeInsets.all(4),
-                                              child: Icon(Icons.add, color: Colors.white, size: 14),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                                const SizedBox(height: 4),
+                                GestureDetector(
+                                  onTap: () {
+                                    context.read<CartProvider>().removeItem(prodId);
+                                  },
+                                  child: const Icon(Icons.delete_outline_rounded, color: BrikTheme.brandNavy, size: 18),
                                 ),
                               ],
                             ),
-                          ),
-                          // Line total
-                          Text(
-                            '₹${lineTotal.toStringAsFixed(0)}',
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 16),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     );
                   }),

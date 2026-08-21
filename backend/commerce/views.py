@@ -85,21 +85,143 @@ class CartItemManageView(APIView):
         product_id = request.data.get('product_id')
         quantity = int(request.data.get('quantity', 1))
 
+        print(f"🛒 [BACKEND] CartItem POST: product_id={product_id} (type={type(product_id).__name__}), quantity={quantity}, user_id={user_id}")
+
         if cart_id:
             cart = Cart.objects.filter(id=cart_id).first()
         else:
             cart, _ = Cart.objects.get_or_create(user_id=user_id, status='ACTIVE')
 
         if not cart:
+            print(f"🛒 [BACKEND] Cart not found!")
             return Response({'error': 'Cart not found'}, status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            product = Product.objects.get(pk=product_id)
-        except Product.DoesNotExist:
-            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+        product = None
+        product_name = request.data.get('product_name', '')
+
+        # 1. Try integer primary key in local DB
+        if isinstance(product_id, int) or (isinstance(product_id, str) and str(product_id).isdigit()):
+            product = Product.objects.filter(pk=int(product_id)).first()
+            if product:
+                print(f"🛒 [BACKEND] Found in DB by PK({int(product_id)}): {product.name}")
+
+        # 2. Try looking up in Merchant Gateway by product_id
+        if not product and product_id:
+            m_prod = merchant_gateway.get_product_by_id(str(product_id))
+            if m_prod:
+                print(f"🛒 [BACKEND] Found in Merchant Gateway by ID '{product_id}': {m_prod['name']}")
+                # Auto-sync merchant, category, and product into DB
+                m_info = m_prod.get('merchant') or {}
+                m_slug = m_info.get('slug') or 'general-merchant'
+                merchant, _ = Merchant.objects.get_or_create(
+                    slug=m_slug,
+                    defaults={
+                        'name': m_info.get('name', 'Merchant Partner'),
+                        'logo_url': m_info.get('logo_url', ''),
+                        'is_active': True,
+                    }
+                )
+
+                c_info = m_prod.get('category') or {}
+                c_name = c_info.get('name') if isinstance(c_info, dict) else (c_info or 'General')
+                from django.utils.text import slugify
+                c_slug = c_info.get('slug') if isinstance(c_info, dict) else slugify(c_name)
+                category, _ = Category.objects.get_or_create(
+                    slug=c_slug,
+                    defaults={'name': c_name}
+                )
+
+                price_val = Decimal(str(m_prod.get('price', 0)))
+                orig_price_val = Decimal(str(m_prod.get('original_price', 0))) if m_prod.get('original_price') else None
+
+                product, _ = Product.objects.get_or_create(
+                    name=m_prod['name'],
+                    merchant=merchant,
+                    defaults={
+                        'category': category,
+                        'brand': m_prod.get('brand', 'Brand'),
+                        'description': m_prod.get('description', ''),
+                        'price': price_val,
+                        'original_price': orig_price_val,
+                        'rating': float(m_prod.get('rating', 4.5)),
+                        'review_count': int(m_prod.get('review_count', 50)),
+                        'stock_quantity': int(m_prod.get('stock_quantity', 50)),
+                        'images': m_prod.get('images', []),
+                        'attributes': m_prod.get('attributes', {}),
+                        'is_available': True,
+                    }
+                )
+                print(f"🛒 [BACKEND] Synced to DB with ID {product.id}: {product.name}")
+
+        # 3. Try merchant gateway search by ID keywords or product_name
+        if not product and (product_id or product_name):
+            search_term = product_name or str(product_id).replace('_', ' ').replace('-', ' ')
+            matched = merchant_gateway.search_all_merchants(query=search_term)
+            if matched:
+                m_prod = matched[0]
+                print(f"🛒 [BACKEND] Matched in Merchant Gateway via search '{search_term}': {m_prod['name']}")
+                m_info = m_prod.get('merchant') or {}
+                m_slug = m_info.get('slug') or 'general-merchant'
+                merchant, _ = Merchant.objects.get_or_create(
+                    slug=m_slug,
+                    defaults={
+                        'name': m_info.get('name', 'Merchant Partner'),
+                        'logo_url': m_info.get('logo_url', ''),
+                        'is_active': True,
+                    }
+                )
+
+                c_info = m_prod.get('category') or {}
+                c_name = c_info.get('name') if isinstance(c_info, dict) else (c_info or 'General')
+                from django.utils.text import slugify
+                c_slug = c_info.get('slug') if isinstance(c_info, dict) else slugify(c_name)
+                category, _ = Category.objects.get_or_create(
+                    slug=c_slug,
+                    defaults={'name': c_name}
+                )
+
+                price_val = Decimal(str(m_prod.get('price', 0)))
+                orig_price_val = Decimal(str(m_prod.get('original_price', 0))) if m_prod.get('original_price') else None
+
+                product, _ = Product.objects.get_or_create(
+                    name=m_prod['name'],
+                    merchant=merchant,
+                    defaults={
+                        'category': category,
+                        'brand': m_prod.get('brand', 'Brand'),
+                        'description': m_prod.get('description', ''),
+                        'price': price_val,
+                        'original_price': orig_price_val,
+                        'rating': float(m_prod.get('rating', 4.5)),
+                        'review_count': int(m_prod.get('review_count', 50)),
+                        'stock_quantity': int(m_prod.get('stock_quantity', 50)),
+                        'images': m_prod.get('images', []),
+                        'attributes': m_prod.get('attributes', {}),
+                        'is_available': True,
+                    }
+                )
+                print(f"🛒 [BACKEND] Synced search match to DB ID {product.id}: {product.name}")
+
+        # 4. Search local DB by keyword or name
+        if not product and (product_id or product_name):
+            search_query = product_name or str(product_id).replace('_', ' ')
+            keywords = [k for k in search_query.split() if len(k) > 2]
+            for kw in keywords:
+                product = Product.objects.filter(name__icontains=kw).first()
+                if product:
+                    print(f"🛒 [BACKEND] Local DB keyword '{kw}' matched: {product.name} (id={product.id})")
+                    break
+
+        # 5. If STILL not found, return clean 404 (no random fallback)
+        if not product:
+            print(f"🛒 [BACKEND] ❌ PRODUCT NOT FOUND for ID: {product_id}")
+            return Response({'error': f'Product not found for ID: {product_id}'}, status=status.HTTP_404_NOT_FOUND)
+
+        print(f"🛒 [BACKEND] ✅ Successfully adding to cart: {product.name} (db_id={product.id}), qty={quantity}")
 
         if quantity <= 0:
             CartItem.objects.filter(cart=cart, product=product).delete()
+            print(f"🛒 [BACKEND] Deleted item from cart")
         else:
             cart_item, created = CartItem.objects.get_or_create(
                 cart=cart,
@@ -110,6 +232,7 @@ class CartItemManageView(APIView):
                 cart_item.quantity = quantity
                 cart_item.unit_price = product.price
                 cart_item.save()
+            print(f"🛒 [BACKEND] Cart item {'CREATED' if created else 'UPDATED'}: qty={quantity}")
 
         return Response(CartSerializer(cart).data)
 

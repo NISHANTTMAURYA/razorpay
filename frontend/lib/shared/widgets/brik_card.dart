@@ -331,6 +331,14 @@ Path _buildHorizontalNotchedPath(
   double notchCornerRadius,
   List<double> dividerX,
 ) {
+  // Guard: degenerate size → return simple rounded rect
+  if (size.width <= 0 || size.height <= 0) {
+    return Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, size.width.clamp(0.0, double.infinity), size.height.clamp(0.0, double.infinity)),
+        Radius.circular(outerRadius.clamp(0.0, double.infinity)),
+      ));
+  }
   final r = outerRadius.clamp(0.0, size.height / 2);
   final d = notchDepth.clamp(0.0, size.height / 2.5);
   final w = notchHalfWidth;
@@ -457,10 +465,10 @@ class _HorizontalNotchedClipper extends CustomClipper<Path> {
 
   @override
   Path getClip(Size size) {
-    if (dividerX.isEmpty) {
+    if (dividerX.isEmpty || size.width <= 0 || size.height <= 0) {
       return Path()
         ..addRRect(RRect.fromRectAndRadius(
-          Rect.fromLTWH(0, 0, size.width, size.height),
+          Rect.fromLTWH(0, 0, size.width.clamp(0.0, double.infinity), size.height.clamp(0.0, double.infinity)),
           Radius.circular(outerRadius),
         ));
     }

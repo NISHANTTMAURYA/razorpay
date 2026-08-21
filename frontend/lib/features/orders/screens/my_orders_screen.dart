@@ -73,7 +73,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
               children: [
                 const Text(
                   'Live Shipment Tracker',
-                  style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800),
+                  style: TextStyle(color: BrikTheme.brandNavy, fontSize: 17, fontWeight: FontWeight.w800),
                 ),
                 PillBadge(
                   text: status,
@@ -173,7 +173,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                 Text(
                   title,
                   style: TextStyle(
-                    color: isActive ? Colors.white : BrikTheme.textSecondaryOnDark,
+                    color: isActive ? BrikTheme.brandNavy : BrikTheme.textSecondaryOnDark,
                     fontWeight: FontWeight.w700,
                     fontSize: 13,
                   ),
@@ -199,12 +199,12 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
         backgroundColor: BrikTheme.canvasBackground,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: BrikTheme.brandNavy, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
           'My Orders & Shipments',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 17),
+          style: TextStyle(color: BrikTheme.brandNavy, fontWeight: FontWeight.w800, fontSize: 17),
         ),
         actions: [
           IconButton(
@@ -234,7 +234,7 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> {
                           const SizedBox(height: 18),
                           const Text(
                             'No Orders Placed Yet',
-                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                            style: TextStyle(color: BrikTheme.brandNavy, fontSize: 18, fontWeight: FontWeight.w800),
                           ),
                           const SizedBox(height: 8),
                           const Text(

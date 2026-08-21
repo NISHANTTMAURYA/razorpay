@@ -1,6 +1,8 @@
 package com.mitrai.mitrai
 
 import android.accessibilityservice.AccessibilityService
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -20,6 +22,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -44,6 +47,16 @@ class MitraiAccessibilityService : AccessibilityService() {
         var isServiceRunning = false
         const val BACKEND_URL = "http://10.0.2.2:8000/api/agent/chat/"
 
+        // BrikTheme Colors (matching Flutter app)
+        const val COLOR_CANVAS_BG = "#F7F4EC"         // Warm luxury cream canvas
+        const val COLOR_CARD_SURFACE = "#EB935C"       // Brand Apricot Coral
+        const val COLOR_CARD_SURFACE_DEEP = "#D97E45"  // Deeper apricot coral
+        const val COLOR_BRAND_NAVY = "#063B5C"         // Mitrai Deep Navy
+        const val COLOR_BRAND_NAVY_LIGHT = "#135882"   // Muted Navy Accent
+        const val COLOR_TEXT_SECONDARY = "#5A7990"      // Muted Slate
+        const val COLOR_ACCENT_LIGHT = "#EAF2F7"       // Soft slate cream tint
+        const val COLOR_CARD_BORDER = "#F4A776"        // Warm coral stroke
+
         val SUPPORTED_COMMERCE_PACKAGES = setOf(
             "in.amazon.mShop.android.shopping", // Amazon India
             "com.amazon.mShop.android.shopping",
@@ -64,6 +77,7 @@ class MitraiAccessibilityService : AccessibilityService() {
     private var windowManager: WindowManager? = null
     private var circularBubbleView: View? = null
     private var overlayBottomSheetView: View? = null
+    private var overlaySheetParams: WindowManager.LayoutParams? = null
     private var isBubbleShowing = false
     private var isBottomSheetShowing = false
     private var currentPackage: String = ""
@@ -142,26 +156,20 @@ class MitraiAccessibilityService : AccessibilityService() {
 
     /**
      * 1. Displays Circular Floating Bubble using Mitrai Logo/Icon
+     *    Uses TYPE_ACCESSIBILITY_OVERLAY for trusted touch events.
      */
     private fun showCircularBubble(targetPackage: String) {
-        if (isBubbleShowing || isBottomSheetShowing || !Settings.canDrawOverlays(this)) return
+        if (isBubbleShowing || isBottomSheetShowing) return
 
         Handler(Looper.getMainLooper()).post {
             try {
                 if (circularBubbleView != null) return@post
 
-                val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_PHONE
-                }
-
                 val sizePx = dpToPx(58f)
                 val params = WindowManager.LayoutParams(
                     sizePx,
                     sizePx,
-                    layoutType,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                     PixelFormat.TRANSLUCENT
@@ -171,22 +179,22 @@ class MitraiAccessibilityService : AccessibilityService() {
                     y = dpToPx(240f)
                 }
 
-                // Create sleek Circular Floating Container
+                // Create Circular Floating Container — Warm Apricot Coral with Navy icon
                 val circle = FrameLayout(this).apply {
                     val bg = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor("#0F172A")) // Slate 900
-                        setStroke(dpToPx(2.5f), Color.parseColor("#3B82F6")) // Blue 500
+                        setColor(Color.parseColor(COLOR_CARD_SURFACE)) // Apricot Coral
+                        setStroke(dpToPx(2.5f), Color.parseColor(COLOR_CARD_BORDER))
                     }
                     background = bg
                     elevation = dpToPx(10f).toFloat()
 
-                    // Icon view (⚡ / Mitrai Star Logo)
+                    // Icon view (⚡)
                     val icon = TextView(this@MitraiAccessibilityService).apply {
                         text = "⚡"
                         textSize = 24f
                         gravity = Gravity.CENTER
-                        setTextColor(Color.parseColor("#60A5FA"))
+                        setTextColor(Color.parseColor(COLOR_BRAND_NAVY))
                     }
                     addView(icon, FrameLayout.LayoutParams(
                         FrameLayout.LayoutParams.MATCH_PARENT,
@@ -261,28 +269,24 @@ class MitraiAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 3. Native Bottom Sheet Overlay (Opens on Top of Amazon/Blinkit/Zepto WITHOUT Opening Main App)
+     * 3. Native Bottom Sheet Overlay
+     *    Uses TYPE_ACCESSIBILITY_OVERLAY for trusted, responsive touch handling.
+     *    Themed to match the Flutter app's BrikTheme (warm cream canvas, apricot coral, navy).
+     *    Swipe-down on drag handle dismisses the sheet.
      */
     private fun showOverlayBottomSheet() {
         hideCircularBubble()
-        if (isBottomSheetShowing || !Settings.canDrawOverlays(this)) return
+        if (isBottomSheetShowing) return
 
         Handler(Looper.getMainLooper()).post {
             try {
-                val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_PHONE
-                }
-
                 val screenHeight = resources.displayMetrics.heightPixels
                 val sheetHeight = (screenHeight * 0.62).toInt()
 
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     sheetHeight,
-                    layoutType,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                             WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
                     PixelFormat.TRANSLUCENT
@@ -290,8 +294,11 @@ class MitraiAccessibilityService : AccessibilityService() {
                     gravity = Gravity.BOTTOM
                     y = 0
                 }
+                overlaySheetParams = params
 
-                // Root Container with Rounded Top Corners
+                // ──────────────────────────────────────────────────
+                //  Root Container — Warm Cream Canvas with rounded top corners
+                // ──────────────────────────────────────────────────
                 val root = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(dpToPx(16f), dpToPx(12f), dpToPx(16f), dpToPx(16f))
@@ -303,28 +310,81 @@ class MitraiAccessibilityService : AccessibilityService() {
                             dpToPx(28f).toFloat(), dpToPx(28f).toFloat(), // Top-right
                             0f, 0f, 0f, 0f
                         )
-                        setColor(Color.parseColor("#0B0F19")) // Dark Navy
-                        setStroke(dpToPx(1f), Color.parseColor("#1E293B"))
+                        setColor(Color.parseColor(COLOR_CANVAS_BG)) // Warm cream canvas
+                        setStroke(dpToPx(1f), Color.parseColor(COLOR_CARD_BORDER))
                     }
                     background = bg
                     elevation = dpToPx(30f).toFloat()
                 }
 
-                // 1. Top Drag Handle
+                // ──────────────────────────────────────────────────
+                //  1. Top Drag Handle — Swipe down to dismiss
+                // ──────────────────────────────────────────────────
+                val handleContainer = FrameLayout(this).apply {
+                    setPadding(0, dpToPx(4f), 0, dpToPx(6f))
+                }
                 val handle = View(this).apply {
                     val hbg = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
                         cornerRadius = dpToPx(4f).toFloat()
-                        setColor(Color.parseColor("#475569"))
+                        setColor(Color.parseColor(COLOR_TEXT_SECONDARY))
                     }
                     background = hbg
                 }
-                root.addView(handle, LinearLayout.LayoutParams(dpToPx(44f), dpToPx(4f)).apply {
+                handleContainer.addView(handle, FrameLayout.LayoutParams(dpToPx(44f), dpToPx(4f)).apply {
                     gravity = Gravity.CENTER_HORIZONTAL
-                    bottomMargin = dpToPx(10f)
                 })
 
-                // 2. Header Bar (Title, App Badge, Close Button)
+                // Swipe-to-dismiss on drag handle area
+                var dragStartY = 0f
+                var isDragging = false
+                handleContainer.setOnTouchListener { _, event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            dragStartY = event.rawY
+                            isDragging = true
+                            true
+                        }
+                        MotionEvent.ACTION_MOVE -> {
+                            if (isDragging) {
+                                val delta = (event.rawY - dragStartY).toInt()
+                                if (delta > 0) {
+                                    params.y = -delta
+                                    try {
+                                        windowManager?.updateViewLayout(root, params)
+                                    } catch (_: Exception) {}
+                                }
+                            }
+                            true
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            val swipeDist = event.rawY - dragStartY
+                            if (swipeDist > dpToPx(80f)) {
+                                // Dismiss
+                                hideOverlayBottomSheet()
+                            } else {
+                                // Snap back
+                                params.y = 0
+                                try {
+                                    windowManager?.updateViewLayout(root, params)
+                                } catch (_: Exception) {}
+                            }
+                            isDragging = false
+                            true
+                        }
+                        else -> false
+                    }
+                }
+
+                root.addView(handleContainer, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ))
+
+                // ──────────────────────────────────────────────────
+                //  2. Header Bar (Title, App Badge, Close Button)
+                //     Navy text on cream canvas
+                // ──────────────────────────────────────────────────
                 val headerRow = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -332,20 +392,20 @@ class MitraiAccessibilityService : AccessibilityService() {
 
                 val titleText = TextView(this).apply {
                     text = "⚡ Mitrai Overlay"
-                    setTextColor(Color.WHITE)
+                    setTextColor(Color.parseColor(COLOR_BRAND_NAVY))
                     textSize = 17f
                     paint.isFakeBoldText = true
                 }
 
                 val appBadge = TextView(this).apply {
                     text = "● ${getReadableAppName(currentPackage)}"
-                    setTextColor(Color.parseColor("#10B981"))
+                    setTextColor(Color.WHITE)
                     textSize = 11f
                     setPadding(dpToPx(8f), dpToPx(3f), dpToPx(8f), dpToPx(3f))
                     val bbg = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
                         cornerRadius = dpToPx(12f).toFloat()
-                        setColor(Color.parseColor("#064E3B"))
+                        setColor(Color.parseColor(COLOR_CARD_SURFACE)) // Apricot coral badge
                     }
                     background = bbg
                 }
@@ -353,7 +413,7 @@ class MitraiAccessibilityService : AccessibilityService() {
                 val spacer = View(this)
                 val closeBtn = TextView(this).apply {
                     text = "✕"
-                    setTextColor(Color.parseColor("#94A3B8"))
+                    setTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
                     textSize = 18f
                     setPadding(dpToPx(10f), dpToPx(6f), dpToPx(10f), dpToPx(6f))
                     setOnClickListener {
@@ -368,28 +428,31 @@ class MitraiAccessibilityService : AccessibilityService() {
                 headerRow.addView(closeBtn)
                 root.addView(headerRow)
 
-                // 3. Screen Context Snippet Box
+                // ──────────────────────────────────────────────────
+                //  3. Screen Context Snippet Card — Deep coral card
+                // ──────────────────────────────────────────────────
                 val contextCard = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(dpToPx(12f), dpToPx(8f), dpToPx(12f), dpToPx(8f))
                     val cbg = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
                         cornerRadius = dpToPx(14f).toFloat()
-                        setColor(Color.parseColor("#1E293B"))
-                        setStroke(dpToPx(1f), Color.parseColor("#334155"))
+                        setColor(Color.parseColor(COLOR_CARD_SURFACE_DEEP)) // Deep apricot card
+                        setStroke(dpToPx(1f), Color.parseColor(COLOR_CARD_BORDER))
                     }
                     background = cbg
                 }
 
                 val contextTitle = TextView(this).apply {
                     text = "📱 Visible on Screen:"
-                    setTextColor(Color.parseColor("#94A3B8"))
+                    setTextColor(Color.parseColor(COLOR_BRAND_NAVY))
                     textSize = 11f
+                    paint.isFakeBoldText = true
                 }
 
                 val contextSnippet = TextView(this).apply {
                     text = if (lastExtractedText.isNotBlank()) lastExtractedText.take(120) else "Active shopping product on screen"
-                    setTextColor(Color.parseColor("#E2E8F0"))
+                    setTextColor(Color.WHITE)
                     textSize = 12.5f
                     maxLines = 2
                 }
@@ -404,7 +467,9 @@ class MitraiAccessibilityService : AccessibilityService() {
                     bottomMargin = dpToPx(12f)
                 })
 
-                // 4. Query Input Row
+                // ──────────────────────────────────────────────────
+                //  4. Query Input Row — Navy outline, cream background
+                // ──────────────────────────────────────────────────
                 val inputRow = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
@@ -412,16 +477,16 @@ class MitraiAccessibilityService : AccessibilityService() {
                     val ibg = GradientDrawable().apply {
                         shape = GradientDrawable.RECTANGLE
                         cornerRadius = dpToPx(24f).toFloat()
-                        setColor(Color.parseColor("#1E293B"))
-                        setStroke(dpToPx(1f), Color.parseColor("#3B82F6"))
+                        setColor(Color.WHITE)
+                        setStroke(dpToPx(1.5f), Color.parseColor(COLOR_BRAND_NAVY))
                     }
                     background = ibg
                 }
 
                 val queryEditText = EditText(this).apply {
                     hint = "Ask anything (e.g. 'Compare price vs Blinkit')..."
-                    setHintTextColor(Color.parseColor("#64748B"))
-                    setTextColor(Color.WHITE)
+                    setHintTextColor(Color.parseColor(COLOR_TEXT_SECONDARY))
+                    setTextColor(Color.parseColor(COLOR_BRAND_NAVY))
                     textSize = 13f
                     background = null
                     isSingleLine = true
@@ -434,7 +499,7 @@ class MitraiAccessibilityService : AccessibilityService() {
                     gravity = Gravity.CENTER
                     val sbg = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
-                        setColor(Color.parseColor("#2563EB"))
+                        setColor(Color.parseColor(COLOR_CARD_SURFACE)) // Apricot coral send btn
                     }
                     background = sbg
                 }
@@ -443,7 +508,9 @@ class MitraiAccessibilityService : AccessibilityService() {
                 inputRow.addView(sendButton, LinearLayout.LayoutParams(dpToPx(36f), dpToPx(36f)))
                 root.addView(inputRow)
 
-                // 5. Response & Loading Area (Scrollable)
+                // ──────────────────────────────────────────────────
+                //  5. Response & Loading Area (Scrollable)
+                // ──────────────────────────────────────────────────
                 val scrollArea = ScrollView(this).apply {
                     isFillViewport = true
                 }
@@ -459,14 +526,14 @@ class MitraiAccessibilityService : AccessibilityService() {
 
                 val responseText = TextView(this).apply {
                     text = "⚡ Ready. Type a query to compare live merchant prices & review consensus."
-                    setTextColor(Color.parseColor("#CBD5E1"))
+                    setTextColor(Color.parseColor(COLOR_BRAND_NAVY))
                     textSize = 12.5f
                     setLineSpacing(dpToPx(2f).toFloat(), 1.15f)
                 }
 
                 val openAppButton = TextView(this).apply {
                     text = "Open Full Assistant in Mitrai App ↗"
-                    setTextColor(Color.parseColor("#60A5FA"))
+                    setTextColor(Color.parseColor(COLOR_CARD_SURFACE))
                     textSize = 12f
                     paint.isFakeBoldText = true
                     setPadding(0, dpToPx(8f), 0, dpToPx(8f))
@@ -489,7 +556,7 @@ class MitraiAccessibilityService : AccessibilityService() {
                     topMargin = dpToPx(8f)
                 })
 
-                // Send Button Click Handler: NO auto-search, only on explicit send
+                // Send Button Click Handler
                 sendButton.setOnClickListener {
                     val q = queryEditText.text.toString().trim()
                     if (q.isNotEmpty()) {
@@ -503,6 +570,16 @@ class MitraiAccessibilityService : AccessibilityService() {
                                 responseText.text = res
                             }
                         }
+                    }
+                }
+
+                // Outside-touch dismissal
+                root.setOnTouchListener { _, event ->
+                    if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                        hideOverlayBottomSheet()
+                        true
+                    } else {
+                        false
                     }
                 }
 
@@ -524,6 +601,7 @@ class MitraiAccessibilityService : AccessibilityService() {
                 if (overlayBottomSheetView != null) {
                     windowManager?.removeView(overlayBottomSheetView)
                     overlayBottomSheetView = null
+                    overlaySheetParams = null
                     isBottomSheetShowing = false
                     // Restore circular bubble
                     if (SUPPORTED_COMMERCE_PACKAGES.contains(currentPackage)) {

@@ -229,11 +229,11 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     });
   }
 
-  void _handleAddToCart(int productId) async {
+  void _handleAddToCart(dynamic productId, {String? productName}) async {
     final cartProvider = context.read<CartProvider>();
-    await cartProvider.addItem(productId);
+    await cartProvider.addItem(productId, productName: productName);
     widget.onCartUpdated?.call(cartProvider.itemCount);
-    _sendMessage('Add product #$productId to my cart');
+    _sendMessage('Added ${productName ?? "product #$productId"} to my cart');
   }
 
   void _openProductDetail(Map<String, dynamic> prod) {
@@ -244,9 +244,9 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
       builder: (context) => ProductDetailSheet(
         product: prod,
         onAddToCart: () {
-          final pid = prod['id'];
-          final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
-          _handleAddToCart(prodId);
+          final prodId = prod['id'] ?? 1;
+          final prodName = prod['name']?.toString();
+          _handleAddToCart(prodId, productName: prodName);
         },
       ),
     );

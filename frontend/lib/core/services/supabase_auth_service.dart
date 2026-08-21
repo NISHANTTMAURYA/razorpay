@@ -33,6 +33,7 @@ class SupabaseAuthService {
 
   String get userId => currentUser?.id ?? 'user_shopper_01';
   String get userEmail => currentUser?.email ?? 'shopper@mitrai.ai';
+  String get userPhone => '+919876543210';
   
   String get userName {
     if (_isInitialized && Supabase.instance.client.auth.currentUser != null) {

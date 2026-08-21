@@ -30,6 +30,9 @@ class BrikHeaderCard extends StatelessWidget {
   /// Optional callback for settings icon in the top header.
   final VoidCallback? onSettingsPressed;
 
+  /// Optional callback for orders icon in the top header.
+  final VoidCallback? onOrdersPressed;
+
   /// Bottom margin for the card (defaults to 10.0).
   final EdgeInsetsGeometry margin;
 
@@ -45,6 +48,7 @@ class BrikHeaderCard extends StatelessWidget {
     this.leading,
     this.onBack,
     this.onSettingsPressed,
+    this.onOrdersPressed,
     this.margin = const EdgeInsets.only(bottom: 10),
     this.padding = const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
   });
@@ -104,6 +108,34 @@ class BrikHeaderCard extends StatelessWidget {
                         textColor: tagTextColor ?? Colors.white,
                       ),
                     ),
+                if (onOrdersPressed != null) ...[
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: onOrdersPressed,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: BrikTheme.brandNavy,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.1),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.inventory_2_outlined,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
                 if (onSettingsPressed != null) ...[
                   const SizedBox(width: 8),
                   GestureDetector(

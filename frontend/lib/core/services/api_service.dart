@@ -161,23 +161,30 @@ class ApiService {
     };
   }
 
-  Future<Map<String, dynamic>> addToCart({required int productId, int quantity = 1}) async {
+  Future<Map<String, dynamic>> addToCart({required dynamic productId, int quantity = 1, String? productName}) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/cart/item/');
-      final response = await _resilientPost(
-        url,
-        jsonEncode({
-          'user_id': SupabaseAuthService().userId,
-          'product_id': productId,
-          'quantity': quantity,
-        }),
-      );
+      final payload = <String, dynamic>{
+        'user_id': SupabaseAuthService().userId,
+        'product_id': productId,
+        'quantity': quantity,
+      };
+      if (productName != null && productName.isNotEmpty) {
+        payload['product_name'] = productName;
+      }
+      final body = jsonEncode(payload);
+      debugPrint('🛒 [API] addToCart REQUEST: url=$url, body=$body');
+      final response = await _resilientPost(url, body);
+
+      debugPrint('🛒 [API] addToCart RESPONSE: status=${response.statusCode}, body=${response.body.substring(0, response.body.length.clamp(0, 500))}');
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
+      } else {
+        debugPrint('🛒 [API] addToCart FAILED: status=${response.statusCode}, body=${response.body}');
       }
     } catch (e) {
-      debugPrint('AddToCart API Error: $e');
+      debugPrint('🛒 [API] AddToCart EXCEPTION: $e');
     }
 
     return await getCart();
@@ -186,7 +193,7 @@ class ApiService {
   // 4. Real Razorpay Checkout & Cryptographic HMAC Verification
   Future<Map<String, dynamic>> checkout({required String cartId, required Map<String, dynamic> shippingAddress}) async {
     try {
-      final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/checkout/');
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/checkout/initiate/');
       final response = await _resilientPost(
         url,
         jsonEncode({
@@ -196,7 +203,7 @@ class ApiService {
         }),
       );
 
-      if (response.statusCode == 200) {
+      if (response.statusCode == 200 || response.statusCode == 201) {
         return jsonDecode(response.body);
       }
     } catch (e) {
