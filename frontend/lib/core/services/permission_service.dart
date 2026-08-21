@@ -134,12 +134,12 @@ class PermissionService {
     if (kIsWeb) return;
     try {
       await _channel.invokeMethod('openAccessibilitySettings');
-    } catch (e) {
-      debugPrint('Open accessibility notice: $e');
-      try {
-        await openAppSettings();
-      } catch (_) {}
-    }
+      return;
+    } catch (_) {}
+
+    try {
+      await openAppSettings();
+    } catch (_) {}
   }
 
   Future<bool> isOverlayPermissionGranted() async {
@@ -157,12 +157,12 @@ class PermissionService {
     if (kIsWeb) return;
     try {
       await _channel.invokeMethod('openOverlaySettings');
-    } catch (e) {
-      debugPrint('Open overlay notice: $e');
-      try {
-        await openAppSettings();
-      } catch (_) {}
-    }
+      return;
+    } catch (_) {}
+
+    try {
+      await openAppSettings();
+    } catch (_) {}
   }
 
   Future<LocationResult?> requestLocationAndFetchAddress() async {

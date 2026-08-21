@@ -7,6 +7,37 @@ from rest_framework.permissions import AllowAny
 from django.http import StreamingHttpResponse
 from .services import CommerceAgentEngine
 from .agent_tracer import AgentExecutionTracer
+from .tasks import process_agent_background_query_task
+
+class AgentBackgroundChatView(APIView):
+    """
+    POST /api/agent/background-chat/
+    Dispatches Celery background worker task to process multi-turn query and generate notification.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        message = request.data.get("message", "")
+        if not message:
+            return Response({"error": "Message is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        history = request.data.get("history", [])
+        cart_id = request.data.get("cart_id")
+        user_id = request.data.get("user_id") or (str(request.user.id) if request.user.is_authenticated else "user_shopper_01")
+
+        # Launch Celery background task
+        async_task = process_agent_background_query_task.delay(
+            message=message,
+            user_id=user_id,
+            cart_id=cart_id,
+            history=history
+        )
+
+        return Response({
+            "status": "QUEUED_IN_BACKGROUND",
+            "task_id": async_task.id,
+            "message": "Mitrai AI is researching across 24 direct brands and live marketplaces in the background via Celery. You will receive a notification when results are ready."
+        }, status=status.HTTP_202_ACCEPTED)
 
 class AgentChatView(APIView):
     """

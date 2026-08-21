@@ -8,6 +8,8 @@ import '../../../shared/widgets/brik_header_card.dart';
 import '../../../shared/widgets/brik_card.dart';
 import '../../../shared/widgets/brik_button.dart';
 import '../../../shared/widgets/pill_badge.dart';
+import '../../orders/screens/my_orders_screen.dart';
+import '../../onboarding/screens/permission_prompt_sheet.dart';
 
 class SettingsScreen extends StatefulWidget {
   final VoidCallback onSignOut;
@@ -21,7 +23,9 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   String _deliveryAddress = '';
   String _phoneNumber = '';
-  String _userDisplayName = '';
+  String _userDisplayName = 'Mitrai Shopper';
+  String _userEmail = 'shopper@mitrai.ai';
+  String _avatarUrl = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120';
   bool _notificationsEnabled = false;
   bool _isDetectingLocation = false;
   List<Map<String, dynamic>> _watchers = [];
@@ -36,6 +40,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadProfileAndSettings() async {
     final auth = SupabaseAuthService();
     String name = auth.userName;
+    String email = auth.userEmail;
+    String avatar = auth.avatarUrl ?? 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120';
     String address = '';
     String phone = '';
     bool notifs = false;
@@ -47,25 +53,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
       phone = prefs.getString('pref_phone_number') ?? '';
       notifs = prefs.getBool('pref_notifications_enabled') ?? false;
       final savedName = prefs.getString('user_name');
-      if (savedName != null && savedName.trim().isNotEmpty) {
+      if (savedName != null && savedName.trim().isNotEmpty && savedName != 'Shopper') {
         name = savedName.trim();
+      }
+      final savedEmail = prefs.getString('user_email');
+      if (savedEmail != null && savedEmail.trim().isNotEmpty) {
+        email = savedEmail.trim();
+      }
+      final savedAvatar = prefs.getString('avatar_url');
+      if (savedAvatar != null && savedAvatar.trim().isNotEmpty) {
+        avatar = savedAvatar.trim();
       }
     } catch (_) {}
 
     // 2. Fetch backend profile to sync if available
     final backendProfile = await ApiService().getUserProfile();
     if (backendProfile != null) {
-      if (backendProfile['delivery_address'] != null && backendProfile['delivery_address'].toString().trim().isNotEmpty) {
-        address = backendProfile['delivery_address'].toString().trim();
+      final prof = backendProfile['user'] is Map ? backendProfile['user'] : backendProfile;
+      if (prof['delivery_address'] != null && prof['delivery_address'].toString().trim().isNotEmpty) {
+        address = prof['delivery_address'].toString().trim();
       }
-      if (backendProfile['phone'] != null && backendProfile['phone'].toString().trim().isNotEmpty) {
-        phone = backendProfile['phone'].toString().trim();
+      if (prof['phone'] != null && prof['phone'].toString().trim().isNotEmpty) {
+        phone = prof['phone'].toString().trim();
       }
-      if (backendProfile['full_name'] != null && backendProfile['full_name'].toString().trim().isNotEmpty) {
-        name = backendProfile['full_name'].toString().trim();
+      if (prof['full_name'] != null && prof['full_name'].toString().trim().isNotEmpty && !prof['full_name'].toString().contains('Explorer')) {
+        name = prof['full_name'].toString().trim();
       }
-      if (backendProfile['notifications_enabled'] != null) {
-        notifs = backendProfile['notifications_enabled'] == true;
+      if (prof['email'] != null && prof['email'].toString().trim().isNotEmpty && prof['email'] != 'shopper@mitrai.ai') {
+        email = prof['email'].toString().trim();
+      }
+      if (prof['avatar_url'] != null && prof['avatar_url'].toString().trim().isNotEmpty) {
+        avatar = prof['avatar_url'].toString().trim();
+      }
+      if (prof['notifications_enabled'] != null) {
+        notifs = prof['notifications_enabled'] == true;
       }
     }
 
@@ -74,7 +95,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (!mounted) return;
     setState(() {
-      _userDisplayName = name;
+      _userDisplayName = name.isNotEmpty ? name : 'Mitrai Shopper';
+      _userEmail = email.isNotEmpty ? email : 'shopper@mitrai.ai';
+      _avatarUrl = avatar.isNotEmpty ? avatar : 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=120';
       _deliveryAddress = address;
       _phoneNumber = phone;
       _notificationsEnabled = notifs;
@@ -169,6 +192,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _editProfileDialog() async {
     final nameController = TextEditingController(text: _userDisplayName);
+    final emailController = TextEditingController(text: _userEmail);
     final phoneController = TextEditingController(text: _phoneNumber);
     final addressController = TextEditingController(text: _deliveryAddress);
 
@@ -190,6 +214,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: const TextStyle(color: Colors.white, fontSize: 13.5),
                 decoration: InputDecoration(
                   labelText: 'Full Name',
+                  labelStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark),
+                  filled: true,
+                  fillColor: BrikTheme.cardSurfaceSecondary,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: emailController,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(color: Colors.white, fontSize: 13.5),
+                decoration: InputDecoration(
+                  labelText: 'Email Address',
                   labelStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark),
                   filled: true,
                   fillColor: BrikTheme.cardSurfaceSecondary,
@@ -240,11 +277,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     if (saved == true && mounted) {
       final newName = nameController.text.trim();
+      final newEmail = emailController.text.trim();
       final newPhone = phoneController.text.trim();
       final newAddr = addressController.text.trim();
 
       setState(() {
         if (newName.isNotEmpty) _userDisplayName = newName;
+        if (newEmail.isNotEmpty) _userEmail = newEmail;
         _phoneNumber = newPhone;
         _deliveryAddress = newAddr;
       });
@@ -252,12 +291,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       try {
         final prefs = await SharedPreferences.getInstance();
         if (newName.isNotEmpty) await prefs.setString('user_name', newName);
+        if (newEmail.isNotEmpty) await prefs.setString('user_email', newEmail);
         await prefs.setString('pref_phone_number', newPhone);
         await prefs.setString('pref_delivery_address', newAddr);
       } catch (_) {}
 
       await ApiService().updateUserProfile({
         'full_name': _userDisplayName,
+        'email': _userEmail,
         'phone': _phoneNumber,
         'delivery_address': _deliveryAddress,
       });
@@ -317,8 +358,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = SupabaseAuthService();
-    final userEmail = auth.userEmail;
-    final avatarUrl = auth.avatarUrl;
+    final userEmail = _userEmail.isNotEmpty ? _userEmail : auth.userEmail;
+    final avatarUrl = _avatarUrl.isNotEmpty ? _avatarUrl : auth.avatarUrl;
     final isGuest = auth.isGuest;
     final displayName = _userDisplayName.isNotEmpty ? _userDisplayName : auth.userName;
     final bottomSafeArea = MediaQuery.of(context).padding.bottom;
@@ -401,14 +442,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      PillBadge(
-                                        text: isGuest ? 'GUEST' : 'LOGGED IN',
-                                        backgroundColor: BrikTheme.brandNavy,
-                                        textColor: Colors.white,
-                                        fontSize: 9,
-                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      ),
+                                       const SizedBox(width: 8),
+                                       PillBadge(
+                                         text: isGuest ? 'GUEST' : 'LOGGED IN',
+                                         backgroundColor: BrikTheme.brandNavy,
+                                         textColor: Colors.white,
+                                         fontSize: 9,
+                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                       ),
+                                       const SizedBox(width: 6),
+                                       GestureDetector(
+                                         onTap: _editProfileDialog,
+                                         child: Container(
+                                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                           decoration: BoxDecoration(
+                                             color: Colors.white.withValues(alpha: 0.15),
+                                             borderRadius: BorderRadius.circular(6),
+                                           ),
+                                           child: const Text(
+                                             'EDIT',
+                                             style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800),
+                                           ),
+                                         ),
+                                       ),
                                     ],
                                   ),
                                   const SizedBox(height: 4),
@@ -524,7 +580,95 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
 
-                  // 3. Permissions & Notifications Card
+                  // 3. My Orders & Live Shipments Card
+                  GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const MyOrdersScreen(),
+                        ),
+                      );
+                    },
+                    child: BrikCard(
+                      padding: const EdgeInsets.all(18),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: BrikTheme.brandNavy,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Icon(Icons.receipt_long_rounded, color: Colors.white, size: 20),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: const [
+                                Text(
+                                  'My Orders & Shipments',
+                                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'View Razorpay receipts & live tracking timeline',
+                                  style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Icon(Icons.arrow_forward_ios_rounded, color: BrikTheme.brandNavy, size: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  // 3.5. Background Shopping Copilot (Zave Mode) Setup & Reconfiguration Card
+                  BrikCard(
+                    padding: const EdgeInsets.all(18),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: BrikTheme.brandNavy,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 20),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: const [
+                              Text(
+                                'Background Copilot (Zave Mode)',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13.5),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Floating assistant & instant comparison over Amazon, Blinkit, Zepto',
+                                style: TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 11),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        BrikButton(
+                          text: 'SETUP ⚡',
+                          style: BrikButtonStyle.primaryLilac,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          onPressed: () => PermissionPromptSheet.showIfNeeded(context, force: true),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // 4. Permissions & Notifications Card
                   BrikCard(
                     padding: const EdgeInsets.all(18),
                     margin: const EdgeInsets.only(bottom: 12),

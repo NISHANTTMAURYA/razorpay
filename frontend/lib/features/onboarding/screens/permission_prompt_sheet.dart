@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/brik_theme.dart';
 import '../../../core/services/permission_service.dart';
 import '../../../shared/widgets/brik_card.dart';
@@ -20,6 +21,9 @@ class PermissionPromptSheet extends StatefulWidget {
         builder: (ctx) => PermissionPromptSheet(
           onComplete: () {
             Navigator.pop(ctx);
+            SharedPreferences.getInstance().then((prefs) {
+              prefs.setBool('has_setup_copilot', true);
+            }).catchError((_) {});
             if (onComplete != null) onComplete();
           },
         ),

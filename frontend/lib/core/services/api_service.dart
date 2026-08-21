@@ -22,6 +22,34 @@ class ApiService {
     };
   }
 
+  // Helper for resilient GET requests with automatic LAN failover
+  Future<http.Response> _resilientGet(Uri uri) async {
+    try {
+      return await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+    } catch (e) {
+      if (ApiConstants.baseUrl.contains('127.0.0.1')) {
+        ApiConstants.useLanFallback();
+        final fallbackUri = Uri.parse(uri.toString().replaceAll('http://127.0.0.1:8000', ApiConstants.baseUrl));
+        return await http.get(fallbackUri, headers: _headers).timeout(const Duration(seconds: 8));
+      }
+      rethrow;
+    }
+  }
+
+  // Helper for resilient POST requests with automatic LAN failover
+  Future<http.Response> _resilientPost(Uri uri, String body) async {
+    try {
+      return await http.post(uri, headers: _headers, body: body).timeout(const Duration(seconds: 30));
+    } catch (e) {
+      if (ApiConstants.baseUrl.contains('127.0.0.1')) {
+        ApiConstants.useLanFallback();
+        final fallbackUri = Uri.parse(uri.toString().replaceAll('http://127.0.0.1:8000', ApiConstants.baseUrl));
+        return await http.post(fallbackUri, headers: _headers, body: body).timeout(const Duration(seconds: 30));
+      }
+      rethrow;
+    }
+  }
+
   // 1. Fetch Live Products from Django Catalog
   Future<List<Map<String, dynamic>>> getProducts({String? category, double? maxPrice, String? query}) async {
     try {
@@ -32,7 +60,7 @@ class ApiService {
           if (query != null) 'q': query,
         },
       );
-      final response = await http.get(uri, headers: _headers).timeout(const Duration(seconds: 8));
+      final response = await _resilientGet(uri);
       if (response.statusCode == 200) {
         final List data = jsonDecode(response.body);
         return List<Map<String, dynamic>>.from(data);
@@ -52,17 +80,16 @@ class ApiService {
   }) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/agent/chat/');
-      final response = await http.post(
+      final response = await _resilientPost(
         url,
-        headers: _headers,
-        body: jsonEncode({
+        jsonEncode({
           'message': message,
           'history': history ?? [],
           'conversation_id': conversationId ?? 'conv_mitrai_active',
           'user_id': SupabaseAuthService().userId,
           'cart_id': cartId,
         }),
-      ).timeout(const Duration(seconds: 30));
+      );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -80,13 +107,44 @@ class ApiService {
     };
   }
 
+  /// Dispatches Celery background agent task so research continues even if user exits
+  Future<Map<String, dynamic>> sendBackgroundChatMessage({
+    required String message,
+    List<Map<String, dynamic>>? history,
+    String? cartId,
+  }) async {
+    try {
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/agent/background-chat/');
+      final response = await _resilientPost(
+        url,
+        jsonEncode({
+          'message': message,
+          'history': history ?? [],
+          'user_id': SupabaseAuthService().userId,
+          'cart_id': cartId,
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 202) {
+        return jsonDecode(response.body);
+      }
+    } catch (e) {
+      debugPrint('Background Agent API Error: $e');
+    }
+
+    return {
+      'status': 'FAILED',
+      'message': 'Failed to launch background research task.'
+    };
+  }
+
   // 3. Cart Management on Live Backend
   Future<Map<String, dynamic>> getCart() async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/cart/').replace(
         queryParameters: {'user_id': SupabaseAuthService().userId},
       );
-      final response = await http.get(url, headers: _headers).timeout(const Duration(seconds: 8));
+      final response = await _resilientGet(url);
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
       }
@@ -106,15 +164,14 @@ class ApiService {
   Future<Map<String, dynamic>> addToCart({required int productId, int quantity = 1}) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/cart/item/');
-      final response = await http.post(
+      final response = await _resilientPost(
         url,
-        headers: _headers,
-        body: jsonEncode({
+        jsonEncode({
           'user_id': SupabaseAuthService().userId,
           'product_id': productId,
           'quantity': quantity,
         }),
-      ).timeout(const Duration(seconds: 8));
+      );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -129,18 +186,17 @@ class ApiService {
   // 4. Real Razorpay Checkout & Cryptographic HMAC Verification
   Future<Map<String, dynamic>> checkout({required String cartId, required Map<String, dynamic> shippingAddress}) async {
     try {
-      final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/checkout/initiate/');
-      final response = await http.post(
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/checkout/');
+      final response = await _resilientPost(
         url,
-        headers: _headers,
-        body: jsonEncode({
+        jsonEncode({
           'cart_id': cartId,
           'user_id': SupabaseAuthService().userId,
           'shipping_address': shippingAddress,
         }),
-      ).timeout(const Duration(seconds: 10));
+      );
 
-      if (response.statusCode == 201 || response.statusCode == 200) {
+      if (response.statusCode == 200) {
         return jsonDecode(response.body);
       }
     } catch (e) {
@@ -164,16 +220,15 @@ class ApiService {
   }) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/payment/verify/');
-      final response = await http.post(
+      final response = await _resilientPost(
         url,
-        headers: _headers,
-        body: jsonEncode({
+        jsonEncode({
           'order_id': orderId,
           'razorpay_order_id': razorpayOrderId,
           'razorpay_payment_id': razorpayPaymentId,
           'razorpay_signature': razorpaySignature,
         }),
-      ).timeout(const Duration(seconds: 10));
+      );
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -197,16 +252,15 @@ class ApiService {
   }) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/watchers/');
-      final response = await http.post(
+      final response = await _resilientPost(
         url,
-        headers: _headers,
-        body: jsonEncode({
+        jsonEncode({
           'product_id': productId,
           'user_id': SupabaseAuthService().userId,
           'condition_type': conditionType,
           if (targetPrice != null) 'target_value': targetPrice.toString(),
         }),
-      ).timeout(const Duration(seconds: 8));
+      );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         return jsonDecode(response.body);
@@ -226,7 +280,7 @@ class ApiService {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/watchers/').replace(
         queryParameters: {'user_id': SupabaseAuthService().userId},
       );
-      final response = await http.get(url, headers: _headers).timeout(const Duration(seconds: 8));
+      final response = await _resilientGet(url);
       if (response.statusCode == 200) {
         final List data = jsonDecode(response.body);
         return List<Map<String, dynamic>>.from(data);
@@ -240,12 +294,29 @@ class ApiService {
   Future<bool> deleteWatcher(String watcherId) async {
     try {
       final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/watchers/$watcherId/');
+      // Note: Kept standard delete as there is no _resilientDelete helper
       final response = await http.delete(url, headers: _headers).timeout(const Duration(seconds: 8));
       return response.statusCode == 200;
     } catch (e) {
       debugPrint('DeleteWatcher API Error: $e');
       return false;
     }
+  }
+
+  Future<List<Map<String, dynamic>>> getWatchNotifications() async {
+    try {
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/watchers/notifications/').replace(
+        queryParameters: {'user_id': SupabaseAuthService().userId},
+      );
+      final response = await _resilientGet(url);
+      if (response.statusCode == 200) {
+        final List data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data);
+      }
+    } catch (e) {
+      debugPrint('GetWatchNotifications API Error: $e');
+    }
+    return [];
   }
 
   // 6. User Profile & Backend Sync
@@ -307,5 +378,22 @@ class ApiService {
       debugPrint('UpdateUserProfile API Error: $e');
     }
     return null;
+  }
+
+  Future<List<Map<String, dynamic>>> getOrders() async {
+    try {
+      final uid = SupabaseAuthService().userId;
+      final url = Uri.parse('${ApiConstants.baseUrl}/api/commerce/orders/').replace(
+        queryParameters: {'user_id': uid},
+      );
+      final response = await http.get(url, headers: _headers).timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+    } catch (e) {
+      debugPrint('GetOrders API Error: $e');
+    }
+    return [];
   }
 }

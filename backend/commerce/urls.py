@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     ProductListView, ProductDetailView,
     CartView, CartItemManageView,
-    CheckoutView, VerifyPaymentView, OrderDetailView,
+    CheckoutView, VerifyPaymentView, OrderListView, OrderDetailView,
     ProductWatcherListView, ProductWatcherDetailView, WatchNotificationListView
 )
 
@@ -19,6 +19,7 @@ urlpatterns = [
     # Checkout & Payment
     path('checkout/initiate/', CheckoutView.as_view(), name='checkout_initiate'),
     path('payment/verify/', VerifyPaymentView.as_view(), name='payment_verify'),
+    path('orders/', OrderListView.as_view(), name='order_list'),
     path('orders/<uuid:pk>/', OrderDetailView.as_view(), name='order_detail'),
 
     # Dynamic Product Watcher & Radar

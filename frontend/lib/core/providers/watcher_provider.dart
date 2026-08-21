@@ -3,14 +3,18 @@ import '../services/api_service.dart';
 
 class WatcherProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _watchers = [];
+  List<Map<String, dynamic>> _notifications = [];
   bool _isLoading = false;
 
   List<Map<String, dynamic>> get watchers => _watchers;
+  List<Map<String, dynamic>> get notifications => _notifications;
   bool get isLoading => _isLoading;
   int get activeCount => _watchers.where((w) => w['status'] == 'ACTIVE').length;
+  int get unreadNotificationsCount => _notifications.length;
 
   WatcherProvider() {
     loadWatchers();
+    loadNotifications();
   }
 
   Future<void> loadWatchers() async {
@@ -20,6 +24,12 @@ class WatcherProvider extends ChangeNotifier {
     final result = await ApiService().getWatchers();
     _watchers = result;
     _isLoading = false;
+    notifyListeners();
+  }
+
+  Future<void> loadNotifications() async {
+    final notifs = await ApiService().getWatchNotifications();
+    _notifications = notifs;
     notifyListeners();
   }
 

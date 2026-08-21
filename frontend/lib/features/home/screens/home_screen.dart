@@ -15,7 +15,9 @@ import '../../chat/screens/ai_shopping_screen.dart';
 import '../../cart/screens/cart_screen.dart';
 import '../../product/screens/product_detail_sheet.dart';
 import '../../settings/screens/settings_screen.dart';
+import '../../orders/screens/my_orders_screen.dart';
 import '../../onboarding/screens/permission_prompt_sheet.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/motion/luxury_page_transitions.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -32,13 +34,39 @@ class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _discoverSearchController = TextEditingController();
   String _discoverSearchQuery = '';
   String _selectedCategory = 'ALL';
+  bool _hasSetupCopilot = false;
 
   @override
   void initState() {
     super.initState();
+    _checkCopilotSetupStatus();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PermissionPromptSheet.showIfNeeded(context);
+      PermissionPromptSheet.showIfNeeded(context, onComplete: () {
+        _checkCopilotSetupStatus();
+      });
+      context.read<WatcherProvider>().loadNotifications();
     });
+  }
+
+  Future<void> _checkCopilotSetupStatus() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hasSetup = prefs.getBool('has_setup_copilot') ?? false;
+      if (mounted) {
+        setState(() => _hasSetupCopilot = hasSetup);
+      }
+    } catch (_) {}
+  }
+
+  void _openMyOrders() {
+    Navigator.push(
+      context,
+      SpatialPageRoute(
+        page: MyOrdersScreen(
+          onStartShopping: () => setState(() => _currentNavIndex = 1),
+        ),
+      ),
+    );
   }
 
   void _openSettings() {
@@ -139,45 +167,150 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           // ── 1. Top Header Card ───────────────────────────────────────────
           BrikHeaderCard(
-            tagText: 'AGENT ACTIVE',
             margin: const EdgeInsets.only(bottom: 10),
-            onSettingsPressed: _openSettings,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: _openMyOrders,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: BrikTheme.brandNavy,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: BrikTheme.accentLavender.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.receipt_long_rounded, color: Colors.white, size: 14),
+                        SizedBox(width: 5),
+                        Text(
+                          'ORDERS',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _openSettings,
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.settings_outlined,
+                      color: BrikTheme.textSecondaryOnDark,
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
 
-          // ── 2 & 3. Greeting + Live Cart Tracker  →  Joined Card Group ────
+          // ── 2. Greeting & Status Card (Standalone) ───────────────────────
+          BrikCard(
+            padding: const EdgeInsets.fromLTRB(22, 22, 22, 22),
+            margin: const EdgeInsets.only(bottom: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$userName,\nwelcome back',
+                  style: const TextStyle(
+                    color: BrikTheme.textPrimaryOnDark,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  catalog.products.isNotEmpty
+                      ? 'Connected to ${catalog.products.length} live merchant products across 24 direct brands.'
+                      : 'Connected to 24 live merchant APIs and real-time scrapers.',
+                  style: const TextStyle(
+                    color: BrikTheme.textSecondaryOnDark,
+                    fontSize: 12.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── 2.5. Background Shopping Copilot Status Card (Shown Only Before First Setup) ─────
+          if (!_hasSetupCopilot) ...[
+            BrikCard(
+              padding: const EdgeInsets.all(18),
+              margin: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: BrikTheme.brandNavy.withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 22),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: const [
+                        Text(
+                          'Background Copilot (Zave Mode)',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Overlay copilot & price comparisons for Amazon, Blinkit, Zepto',
+                          style: TextStyle(
+                            color: BrikTheme.textSecondaryOnDark,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  BrikButton(
+                    text: 'SETUP ⚡',
+                    style: BrikButtonStyle.primaryLilac,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    onPressed: () async {
+                      try {
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setBool('has_setup_copilot', true);
+                      } catch (_) {}
+                      if (mounted) {
+                        setState(() => _hasSetupCopilot = true);
+                        PermissionPromptSheet.showIfNeeded(context, force: true, onComplete: () {
+                          _checkCopilotSetupStatus();
+                        });
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // ── 3 & 4. Active Shopping Bag + Live Merchant Deal  →  Joined Card Group ────
           JoinedCardGroup(
             margin: const EdgeInsets.only(bottom: 10),
             children: [
-              // Top slot: Greeting & Catalog Status
-              JoinedCard(
-                padding: const EdgeInsets.fromLTRB(22, 22, 22, 22),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '$userName,\nwelcome back',
-                      style: const TextStyle(
-                        color: BrikTheme.textPrimaryOnDark,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w700,
-                        height: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      catalog.products.isNotEmpty
-                          ? 'Connected to ${catalog.products.length} live merchant products across 24 direct brands.'
-                          : 'Connected to 24 live merchant APIs and real-time scrapers.',
-                      style: const TextStyle(
-                        color: BrikTheme.textSecondaryOnDark,
-                        fontSize: 12.5,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Bottom slot: Live Cart / Bag Tracker
+              // Top slot (Card 3): Live Cart / Bag Tracker
               JoinedCard(
                 padding: const EdgeInsets.fromLTRB(22, 20, 22, 22),
                 child: GestureDetector(
@@ -247,180 +380,124 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
               ),
-            ],
-          ),
 
-          // ── 3.5. Background Shopping Copilot Status Card (Zave-Style) ─────
-          BrikCard(
-            padding: const EdgeInsets.all(18),
-            margin: const EdgeInsets.only(bottom: 10),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: BrikTheme.brandNavy.withValues(alpha: 0.25),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 22),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text(
-                        'Background Copilot (Zave Mode)',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      SizedBox(height: 2),
-                      Text(
-                        'Overlay copilot & price comparisons for Amazon, Blinkit, Zepto',
-                        style: TextStyle(
-                          color: BrikTheme.textSecondaryOnDark,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                BrikButton(
-                  text: 'SETUP ⚡',
-                  style: BrikButtonStyle.primaryLilac,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  onPressed: () => PermissionPromptSheet.showIfNeeded(context, force: true),
-                ),
-              ],
-            ),
-          ),
-
-          // ── 4. Real Top Product Deal Card (Zero Fake Fallbacks) ───────────
-          if (topProduct != null) ...[
-            BrikCard(
-              padding: const EdgeInsets.all(22),
-              margin: const EdgeInsets.only(bottom: 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Column(
+              // Bottom slot (Card 4): Live Merchant Deals & Catalog
+              JoinedCard(
+                padding: const EdgeInsets.fromLTRB(22, 20, 22, 22),
+                child: topProduct != null
+                    ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    topProduct['is_platform_product'] != false ? '● MERCHANT DIRECT' : '🌐 SCRAPED DEAL',
+                                    style: const TextStyle(
+                                      color: BrikTheme.brandNavy,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  PillBadge(
+                                    text: '${topProduct['rating'] ?? 4.5} ★ RATED',
+                                    backgroundColor: BrikTheme.brandNavy,
+                                    textColor: Colors.white,
+                                    fontSize: 10,
+                                  ),
+                                ],
+                              ),
+                              BrikButton(
+                                text: 'VIEW DEAL',
+                                style: BrikButtonStyle.primaryLilac,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 10,
+                                ),
+                                onPressed: () {
+                                  showModalBottomSheet(
+                                    context: context,
+                                    isScrollControlled: true,
+                                    backgroundColor: Colors.transparent,
+                                    builder: (context) => ProductDetailSheet(
+                                      product: topProduct,
+                                      onAddToCart: () {
+                                        final pid = topProduct['id'];
+                                        final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
+                                        context.read<CartProvider>().addItem(prodId);
+                                      },
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
                           Text(
-                            topProduct['is_platform_product'] != false ? '● MERCHANT DIRECT' : '🌐 SCRAPED DEAL',
+                            topProduct['name']?.toString() ?? 'Featured Product',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              color: BrikTheme.brandNavy,
-                              fontSize: 12,
+                              color: Colors.white,
+                              fontSize: 18,
                               fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5,
                             ),
                           ),
                           const SizedBox(height: 4),
-                          PillBadge(
-                            text: '${topProduct['rating'] ?? 4.5} ★ RATED',
-                            backgroundColor: BrikTheme.brandNavy,
-                            textColor: Colors.white,
-                            fontSize: 10,
+                          Text(
+                            '₹${topProduct['price']} • ${topProduct['description'] ?? topProduct['brand'] ?? 'Verified'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: BrikTheme.textSecondaryOnDark,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      )
+                    : Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: const [
+                                Text(
+                                  'Live Merchant Catalog',
+                                  style: TextStyle(
+                                    color: BrikTheme.brandNavy,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                SizedBox(height: 4),
+                                Text(
+                                  'Ask Mitrai to search across 10 Direct Merchants & live Amazon/Flipkart.',
+                                  style: TextStyle(
+                                    color: BrikTheme.textSecondaryOnDark,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          BrikButton(
+                            text: 'SEARCH',
+                            style: BrikButtonStyle.primaryLilac,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            onPressed: () => setState(() => _currentNavIndex = 1),
                           ),
                         ],
                       ),
-                      BrikButton(
-                        text: 'VIEW DEAL',
-                        style: BrikButtonStyle.primaryLilac,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
-                        ),
-                        onPressed: () {
-                          showModalBottomSheet(
-                            context: context,
-                            isScrollControlled: true,
-                            backgroundColor: Colors.transparent,
-                            builder: (context) => ProductDetailSheet(
-                              product: topProduct,
-                              onAddToCart: () {
-                                final pid = topProduct['id'];
-                                final prodId = pid is int ? pid : (int.tryParse(pid?.toString() ?? '1') ?? 1);
-                                context.read<CartProvider>().addItem(prodId);
-                              },
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    topProduct['name']?.toString() ?? 'Featured Product',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '₹${topProduct['price']} • ${topProduct['description'] ?? topProduct['brand'] ?? 'Verified'}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: BrikTheme.textSecondaryOnDark,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
               ),
-            ),
-          ] else ...[
-            BrikCard(
-              padding: const EdgeInsets.all(20),
-              margin: const EdgeInsets.only(bottom: 10),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: const [
-                        Text(
-                          'Live Merchant Catalog',
-                          style: TextStyle(
-                            color: BrikTheme.brandNavy,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          'Ask Mitrai to search across 10 Direct Merchants & live Amazon/Flipkart.',
-                          style: TextStyle(
-                            color: BrikTheme.textSecondaryOnDark,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  BrikButton(
-                    text: 'SEARCH',
-                    style: BrikButtonStyle.primaryLilac,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    onPressed: () => setState(() => _currentNavIndex = 1),
-                  ),
-                ],
-              ),
-            ),
-          ],
+            ],
+          ),
 
           // ── 5. Side-by-Side Dual Live Metrics (Horizontal Joined Card) ──
           HorizontalJoinedCardGroup(
@@ -698,11 +775,53 @@ class _HomeScreenState extends State<HomeScreen> {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
       child: Column(
         children: [
-          // 1. Header Card
+          // 1. Header Card with Orders Icon & Settings
           BrikHeaderCard(
-            tagText: 'DIRECT GATEWAY',
             margin: const EdgeInsets.only(bottom: 10),
-            onSettingsPressed: _openSettings,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: _openMyOrders,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: BrikTheme.brandNavy,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: BrikTheme.accentLavender.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.receipt_long_rounded, color: Colors.white, size: 14),
+                        SizedBox(width: 5),
+                        Text(
+                          'ORDERS',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _openSettings,
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.settings_outlined,
+                      color: BrikTheme.textSecondaryOnDark,
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
 
           // 2. Discover Value Proposition Card
@@ -836,10 +955,14 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       )
-                    : ListView.builder(
-                        padding: EdgeInsets.only(bottom: effectiveBottomPadding),
-                        itemCount: filteredProducts.length,
-                        itemBuilder: (context, index) {
+                    : RefreshIndicator(
+                        color: BrikTheme.brandNavy,
+                        onRefresh: () => context.read<CatalogProvider>().loadProducts(),
+                        child: ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: EdgeInsets.only(bottom: effectiveBottomPadding),
+                          itemCount: filteredProducts.length,
+                          itemBuilder: (context, index) {
                           final p = filteredProducts[index];
                           final title = p['name']?.toString() ?? 'Product';
                           final brand = p['brand']?.toString() ?? (p['merchant']?['name']?.toString() ?? 'Mitrai');
@@ -860,17 +983,18 @@ class _HomeScreenState extends State<HomeScreen> {
                             imageUrl = p['image'].toString();
                           }
 
-                          return _buildRealProductCard(
-                            product: p,
-                            title: title,
-                            brand: brand,
-                            subtitle: subtitle,
-                            price: '₹$price',
-                            originalPrice: origPrice.isNotEmpty && origPrice != price ? '₹$origPrice' : '',
-                            rating: '$rating ★',
-                            imageUrl: imageUrl,
-                          );
-                        },
+                            return _buildRealProductCard(
+                              product: p,
+                              title: title,
+                              brand: brand,
+                              subtitle: subtitle,
+                              price: '₹$price',
+                              originalPrice: origPrice.isNotEmpty && origPrice != price ? '₹$origPrice' : '',
+                              rating: '$rating ★',
+                              imageUrl: imageUrl,
+                            );
+                          },
+                        ),
                       ),
           ),
         ],

@@ -1,7 +1,16 @@
 class ApiConstants {
   // Backend URL works on physical Android, web & desktop
-  static String get baseUrl {
-    return 'http://127.0.0.1:8000';
+  static String _activeBaseUrl = 'http://127.0.0.1:8000';
+  static const String lanFallbackUrl = 'http://192.168.29.231:8000';
+
+  static String get baseUrl => _activeBaseUrl;
+
+  static void useLanFallback() {
+    _activeBaseUrl = lanFallbackUrl;
+  }
+
+  static void setBaseUrl(String url) {
+    _activeBaseUrl = url.trim();
   }
 
   // Supabase Configuration

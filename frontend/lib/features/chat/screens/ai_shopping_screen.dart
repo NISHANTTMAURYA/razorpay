@@ -41,9 +41,7 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     super.initState();
     _initChatSession();
     if (widget.initialMessage != null && widget.initialMessage!.trim().isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _sendMessage(widget.initialMessage!.trim());
-      });
+      _textController.text = widget.initialMessage!.trim();
     }
   }
 
@@ -172,33 +170,51 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
     await _saveCurrentSession();
 
     final currentHistory = _history;
-    final response = await ApiService().sendAgentMessage(
+    final sessionId = _currentSession?.id;
+
+    // Trigger Celery background research so the response is computed and creates a notification
+    // even if the user exits the app or closes the screen!
+    ApiService().sendBackgroundChatMessage(
       message: text,
-      history: currentHistory,
-      conversationId: _currentSession?.id,
+      history: currentHistory.map((h) => Map<String, dynamic>.from(h)).toList(),
       cartId: cartId,
     );
 
-    if (!mounted) return;
+    final response = await ApiService().sendAgentMessage(
+      message: text,
+      history: currentHistory,
+      conversationId: sessionId,
+      cartId: cartId,
+    );
 
     final respText = (response['response'] ?? response['message'] ?? '').toString().trim();
     final effectiveText = respText.isEmpty ? 'There is an error right now. Please chat later.' : respText;
 
-    setState(() {
-      _isLoading = false;
-      _messages.add({
-        'isUser': false,
-        'text': effectiveText,
-        'products': List<Map<String, dynamic>>.from(response['products'] ?? []),
-        'comparison': response['comparison'],
-        'cart': response['cart'],
-        'steps': List<Map<String, dynamic>>.from(response['steps'] ?? []),
-        'actions': List<Map<String, dynamic>>.from(response['suggested_actions'] ?? []),
-      });
-    });
+    final botMessage = {
+      'isUser': false,
+      'text': effectiveText,
+      'products': List<Map<String, dynamic>>.from(response['products'] ?? []),
+      'comparison': response['comparison'],
+      'cart': response['cart'],
+      'steps': List<Map<String, dynamic>>.from(response['steps'] ?? []),
+      'actions': List<Map<String, dynamic>>.from(response['suggested_actions'] ?? []),
+    };
 
-    _scrollToBottom();
-    await _saveCurrentSession();
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        _messages.add(botMessage);
+      });
+      _scrollToBottom();
+      await _saveCurrentSession();
+    } else {
+      // User navigated away: persist message directly to disk storage
+      if (_currentSession != null) {
+        _currentSession!.messages.add(botMessage);
+        _currentSession!.updatedAt = DateTime.now();
+        await ChatStorageService().saveSession(_currentSession!);
+      }
+    }
   }
 
   void _scrollToBottom() {
@@ -549,15 +565,7 @@ class _AiShoppingScreenState extends State<AiShoppingScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: BrikTheme.cardSurface,
-                shape: BoxShape.circle,
-                border: Border.all(color: BrikTheme.cardBorder),
-              ),
-              child: const Icon(Icons.auto_awesome_rounded, color: BrikTheme.brandNavy, size: 38),
-            ),
+            const CircularLogo(size: 64),
             const SizedBox(height: 24),
             Wrap(
               spacing: 8,

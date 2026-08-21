@@ -20,12 +20,103 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _handleGoogleSignIn() async {
     setState(() => _isLoading = true);
-    await SupabaseAuthService().signInWithGoogle();
+    final success = await SupabaseAuthService().signInWithGoogle();
     setState(() => _isLoading = false);
 
-    if (mounted) {
+    if (success && mounted) {
       widget.onLoginSuccess();
+    } else if (mounted) {
+      _showCustomLoginDialog(
+        title: 'Complete Profile Sign In',
+        subtitle: 'Enter your name and email to personalize your shopping copilot.',
+      );
     }
+  }
+
+  Future<void> _showCustomLoginDialog({
+    String title = 'Sign In to Mitrai',
+    String subtitle = 'Enter your name and email to start shopping.',
+  }) async {
+    final nameController = TextEditingController();
+    final emailController = TextEditingController();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: BrikTheme.cardSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          title,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              subtitle,
+              style: const TextStyle(color: BrikTheme.textSecondaryOnDark, fontSize: 12.5),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: nameController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              decoration: InputDecoration(
+                labelText: 'Your Full Name',
+                labelStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark),
+                filled: true,
+                fillColor: BrikTheme.cardSurfaceSecondary,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              style: const TextStyle(color: Colors.white, fontSize: 14),
+              decoration: InputDecoration(
+                labelText: 'Email Address',
+                labelStyle: const TextStyle(color: BrikTheme.textSecondaryOnDark),
+                filled: true,
+                fillColor: BrikTheme.cardSurfaceSecondary,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('CANCEL', style: TextStyle(color: BrikTheme.brandNavy, fontWeight: FontWeight.w700)),
+          ),
+          BrikButton(
+            text: 'CONTINUE ⚡',
+            style: BrikButtonStyle.primaryLilac,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            onPressed: () async {
+              final name = nameController.text.trim();
+              final email = emailController.text.trim();
+              if (name.isEmpty) return;
+
+              final cleanEmail = email.isNotEmpty ? email : '${name.toLowerCase().replaceAll(' ', '')}@mitrai.ai';
+              Navigator.pop(ctx);
+              
+              setState(() => _isLoading = true);
+              await SupabaseAuthService().signInWithCustomIdentity(
+                name: name,
+                email: cleanEmail,
+              );
+              setState(() => _isLoading = false);
+              
+              if (mounted) {
+                widget.onLoginSuccess();
+              }
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleGuestSignIn() {
